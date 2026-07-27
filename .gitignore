@@ -1,0 +1,20 @@
+# Results (large/generated)
+results/
+
+# Scenario bank (generated)
+scenario_bank/
+
+# Third party source (can be cloned separately)
+third_party/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# MATLAB
+*.asv
+*.m~
+
+# OS
+.DS_Store
+Thumbs.db
