@@ -1,0 +1,2 @@
+seed,algorithm,success,rmse,trajectoryCost,meanSolveTime,maxSolveTime,totalSolveTime,medianSolveTime,q1SolveTime,q3SolveTime,wheelSpeedViolationRatio,maxWheelSpeedViolation,steeringRateViolationRatio,maxSteeringRateViolation,successRate,validStepRate,elapsedTime
+1,interior-point,1,0.0293995504498718,13.9547469088071,0.394627036,4.4292386,39.4627036,0.2489557,0.215382125,0.329476,0,0,0.00505050505050505,286.329039106322,1,1,39.564743

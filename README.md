@@ -34,14 +34,12 @@ RSS/
 │   └── config_hpipm.m                    # HPIPM 配置
 ├── python/
 │   └── hpipm_solver.py         # HPIPM Python 接口
-├── results/                    # 输出（.mat/.csv/.png）
-│   ├── comparison_checkpoint.mat  # 断点续跑记录
-│   ├── comparison_final.mat       # 完整结果
-│   ├── per_algorithm/{alg}/       # 逐 seed 轨迹图
-│   └── paper_reproduction/        # 论文复现结果
-├── scenario_bank/              # 预生成场景（.mat）
-└── third_party/                # HPIPM / BLASFEO 源码
+└── tests/                      # Python 单元测试
+    ├── test_matlab_baseline.py
+    └── test_python_rss_controller.py
 ```
+
+> 本地运行仿真后还会生成 `results/`（输出结果）、`scenario_bank/`（预生成场景）、`third_party/`（HPIPM/BLASFEO 源码）三个目录，已在 `.gitignore` 中排除，不入库。
 
 ## 仿真流水线
 
