@@ -13,7 +13,8 @@ function summary = run_paper_baseline_case(config, scenario)
 %   - interior-point  → algorithms/RSS_fmincon/control_RSS.m   (git submodule)
 %   - active-set      → algorithms/control_active_set.m        (本地实现)
 %
-% 注: submodule 接口不返回 exitflag/warmstarted, 相关字段记为 NaN/false。
+% 注: 每个算法使用各自 submodule 的 config.m 参数 (不使用外部传入的 config 覆盖)。
+%     submodule 接口不返回 exitflag/warmstarted, 相关字段记为 NaN/false。
 %     iter_num 从 submodule 的第 4 个输出获取 (e-lmpc/interior-point)。
 %     RSS_proposed 只输出 new_state_dot, 缺失的 u/solve_time/iter_num 记为 NaN。
 %
@@ -49,6 +50,31 @@ function summary = run_paper_baseline_case(config, scenario)
         'e-lmpc',         fullfile(workspace_root, 'algorithms', 'RSS_sqp'), ...
         'interior-point', fullfile(workspace_root, 'algorithms', 'RSS_fmincon') ...
     );
+
+    %% =====================================================
+    % 加载算法各自的 config.m (每个算法用各自的参数)
+    % ======================================================
+    switch algorithm
+        case 'proposed-3iter'
+            addpath(submodule_paths.('proposed-3iter'));
+            alg_params = feval('config');
+            rmpath(submodule_paths.('proposed-3iter'));
+        case 'e-lmpc'
+            addpath(submodule_paths.('e-lmpc'));
+            alg_params = feval('config');
+            rmpath(submodule_paths.('e-lmpc'));
+        case 'interior-point'
+            addpath(submodule_paths.('interior-point'));
+            alg_params = feval('config');
+            rmpath(submodule_paths.('interior-point'));
+        case 'active-set'
+            alg_params = defaultConfig();
+        otherwise
+            error('run_paper_baseline_case:UnsupportedAlgorithm', ...
+                '不支持算法: %s', algorithm);
+    end
+    alg_params.algorithm = algorithm;
+    config = alg_params;
 
     %% =====================================================
     % 参数提取

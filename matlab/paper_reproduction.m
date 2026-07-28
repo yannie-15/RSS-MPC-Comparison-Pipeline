@@ -1,22 +1,23 @@
 function comparison = paper_reproduction()
 % PAPER_REPRODUCTION  论文 Section IV 固定轨迹实验复现
 %
-% 使用论文 Section IV 的固定参数对四种算法进行仿真:
+% 使用论文 Section IV 的固定初始状态对四种算法进行仿真:
 %   - proposed-3iter
 %   - e-lmpc
 %   - active-set
 %   - interior-point
 %
-% 论文固定参数:
-%   - Bezier 控制点: [(0,0), (0.75,0.25), (0.25,0.75), (1.25,-1), (1,0)]
-%   - 轨迹时长: 1 s, 采样周期: 0.01 s, 闭环步数: 100
-%   - MPC 预测时域: K=6
-%   - 底盘尺寸: 0.655 m x 0.335 m
-%   - 最大轮速: 5 m/s, 最大转向速率: 5*pi rad/s
-%   - 姿态: 按归一化弧长平方从 0 增加至 2*pi
-%   - Q=diag(30,30,1), R=diag(0.3,0.3,0.3)
+% 每个算法使用各自 submodule 的 config.m 参数 (不在本脚本中覆盖):
+%   - proposed-3iter → algorithms/RSS_proposed/config.m
+%   - e-lmpc         → algorithms/RSS_sqp/config.m
+%   - interior-point → algorithms/RSS_fmincon/config.m
+%   - active-set     → defaultConfig.m (本地, 对齐 RSS_fmincon)
 %
-% 输出格式与 compare_algorithms 一致:
+% 固定初始状态 (论文无随机性):
+%   - initialState  = [0.05; 0.1; 0.2]
+%   - initialVelocity = [0.01; 0.01; 0.01]
+%
+% 输出格式与 main 一致:
 %   - results/paper_reproduction/per_algorithm/{算法名}/{算法名}_summary.png
 %   - results/paper_reproduction/per_algorithm/{算法名}/seed_0001.png
 %   - results/paper_reproduction/{算法名}_results.csv
@@ -33,7 +34,7 @@ function comparison = paper_reproduction()
     addpath(fullfile(workspace_root, 'algorithms'));
 
     %% =====================================================
-    % 2. 论文固定参数
+    % 2. 算法列表与场景设置
     % ======================================================
     algorithms = {'proposed-3iter', 'e-lmpc', 'active-set', 'interior-point'};
     num_algorithms = length(algorithms);
@@ -41,33 +42,13 @@ function comparison = paper_reproduction()
     fprintf('========================================\n');
     fprintf('论文 Section IV 固定轨迹实验复现\n');
     fprintf('算法: %s\n', strjoin(algorithms, ', '));
+    fprintf('(每个算法使用各自 submodule 的 config.m 参数)\n');
     fprintf('========================================\n');
 
-    % defaultConfig 默认值即为论文参数, 这里显式重申以便审阅
-    cfg = defaultConfig();
-    cfg.dt = 0.01;
-    cfg.t_end = 1.0;
-    cfg.num_steps = round(cfg.t_end / cfg.dt);   % 100
-    cfg.num_path_pts = cfg.num_steps;
-    cfg.Lx = 0.655;
-    cfg.Ly = 0.335;
-    cfg.a = cfg.Lx / 2;
-    cfg.b = cfg.Ly / 2;
-    cfg.wheel_pos = [ cfg.a,  cfg.b;
-                     -cfg.a,  cfg.b;
-                     -cfg.a, -cfg.b;
-                      cfg.a, -cfg.b];
-    cfg.vimax = 5;
-    cfg.phidotmax = 5 * pi;
-    cfg.ctrl_pts = [0.000, 0.000;
-                    0.750, 0.250;
-                    0.250, 0.750;
-                    1.250,-1.000;
-                    1.000, 0.000];
-    cfg.output.livePlot = false;
-    cfg.output.saveFigures = false;
+    % cfg 仅传递算法名, 实际参数由 run_paper_baseline_case 加载各自 config.m
+    cfg = struct();
 
-    % 固定场景 (论文无随机性)
+    % 固定初始状态 (论文无随机性)
     scen = struct();
     scen.name = 'paper_fixed';
     scen.id = 1;

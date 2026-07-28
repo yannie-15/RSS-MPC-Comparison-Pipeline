@@ -141,35 +141,46 @@ main('seeds', 1:50, 'algorithms', {'proposed-3iter'}, 'forceRegen', true)
 
 ### 论文结果复现
 
-运行 [paper_reproduction.m](matlab/paper_reproduction.m) 可复现论文 Section IV 的固定轨迹实验，无需 seed，使用论文写死的参数：
+运行 [paper_reproduction.m](matlab/paper_reproduction.m) 可复现论文 Section IV 的固定轨迹实验。无需 seed，每个算法使用各自 submodule 的 config.m 参数：
 
 ```matlab
 cd('d:\PROJECT\RSS_V2\matlab'); setup_paths;
 paper_reproduction
 ```
 
-**论文固定参数**（已内置于脚本，不可配置）：
+**参数来源**（每个算法用各自的 config.m，不在 paper_reproduction 中覆盖）：
 
-| 参数 | 值 | 说明 |
-|---|---|---|
-| Bezier 控制点 | `[(0,0), (0.75,0.25), (0.25,0.75), (1.25,-1), (1,0)]` | 参考轨迹 |
-| 轨迹时长 | 1 s | 闭环时长 |
-| 采样周期 | 0.01 s | 共 100 步 |
-| MPC 预测时域 | K=6 | |
-| 底盘尺寸 | 0.655 m × 0.335 m | |
-| 最大轮速 | 5 m/s | |
-| 最大转向速率 | 5π rad/s | |
-| 初始位姿 | `[0.05, 0.1, 0.2]` | |
-| 初始速度 | `[0.01, 0.01, 0.01]` | |
-| Q | diag(30, 30, 1) | 状态权重 |
-| R | diag(0.3, 0.3, 0.3) | 控制权重 |
-| 姿态变化 | 按归一化弧长平方从 0 → 2π | |
+| 算法 | 参数来源 |
+|---|---|
+| proposed-3iter | `algorithms/RSS_proposed/config.m` |
+| e-lmpc | `algorithms/RSS_sqp/config.m` |
+| interior-point | `algorithms/RSS_fmincon/config.m` |
+| active-set | `matlab/defaultConfig.m`（本地，对齐 RSS_fmincon） |
 
-**算法**：proposed-3iter、e-lmpc、active-set、interior-point（4 种全部跑）
+**固定初始状态**（论文无随机性）：
+
+| 参数 | 值 |
+|---|---|
+| 初始位姿 | `[0.05, 0.1, 0.2]` |
+| 初始速度 | `[0.01, 0.01, 0.01]` |
+
+**各 submodule config.m 参数对比**：
+
+| 参数 | RSS_proposed | RSS_sqp | RSS_fmincon |
+|---|---|---|---|
+| Lx | 655 (mm) | 0.655 (m) | 0.655 (m) |
+| vimax | 1000 | 5 | 5 |
+| phidotmax | 0.5π | 5π | 5π |
+| t_end | 0.6 s | 1.0 s | 1.0 s |
+| num_steps | 60 | 100 | 100 |
+| ctrl_pts | 4 个点 | 5 个点 | 5 个点 |
+| K (预测时域) | 5 | 6 | 6 |
+
+> 注：RSS_proposed 的 config.m 参数与其他三个差异较大（mm 单位、不同轨迹），各算法在各自参数下独立运行。
 
 **与 main.m 的区别**：
-- `main.m` 用 `scenario_bank(seed)` 生成随机场景（Latin 超立方采样），用于批量统计
-- `paper_reproduction.m` 用上述固定参数，无随机性，可精确复现论文结果
+- `main.m` 用 `scenario_bank(seed)` 生成随机场景，所有算法共用同一套参数（defaultConfig）
+- `paper_reproduction.m` 每个算法用各自的 config.m 参数，仅初始状态固定
 
 **输出**（写入 `results/paper_reproduction/`）：
 - `per_algorithm/{算法名}/{算法名}_summary.png` — 单算法汇总图
