@@ -108,8 +108,8 @@ function plot_one_case(r, fig_dir)
     xlabel('x_w (m)', 'FontName', fn, 'FontSize', fs);
     ylabel('y_w (m)', 'FontName', fn, 'FontSize', fs);
     title('Trajectory Tracking Performance', 'FontName', fn, 'FontSize', fs);
-    legend('FontSize', 6, 'FontName', fn);
-    grid on; axis equal;
+    legend('FontSize', 6, 'FontName', fn, 'Location', 'best');
+    grid on; set(gca, 'DataAspectRatio', [1 1 1]);
     set(gca, 'FontName', fn, 'FontSize', fs);
     hold off;
 
@@ -164,7 +164,7 @@ function plot_one_case(r, fig_dir)
 
     % 保存
     fig_file = fullfile(fig_dir, sprintf('seed_%04d.png', r.seed));
-    saveas(fig, fig_file);
+    print(fig, fig_file, '-dpng', '-r150');
     close(fig);
 end
 

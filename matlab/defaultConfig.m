@@ -47,9 +47,6 @@ function params = defaultConfig()
     params.trajectory.mode = "paper_fixed";
     params.trajectory.timeProtocol = "legacy_100_points";
 
-    % Solver selection
-    params.use_hpipm = false;
-
     % Output
     params.output.livePlot = false;
     params.output.saveFigures = true;

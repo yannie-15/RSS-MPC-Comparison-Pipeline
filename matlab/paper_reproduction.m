@@ -29,7 +29,7 @@ function comparison = paper_reproduction()
     script_dir = fileparts(mfilename('fullpath'));
     workspace_root = fileparts(script_dir);
     addpath(fullfile(workspace_root, 'matlab'));
-    addpath(fullfile(workspace_root, 'RSS_proposed'));
+    addpath(fullfile(workspace_root, 'algorithms'));
 
     %% =====================================================
     % 2. 论文固定参数
@@ -63,7 +63,6 @@ function comparison = paper_reproduction()
                     0.250, 0.750;
                     1.250,-1.000;
                     1.000, 0.000];
-    cfg.use_hpipm = false;
     cfg.output.livePlot = false;
     cfg.output.saveFigures = false;
 
