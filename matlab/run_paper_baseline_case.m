@@ -45,10 +45,11 @@ function summary = run_paper_baseline_case(config, scenario)
     % 定位 submodule 路径 (与 run_one_case 一致)
     script_dir = fileparts(mfilename('fullpath'));
     workspace_root = fileparts(script_dir);
-    submodule_paths = struct( ...
-        'proposed-3iter', fullfile(workspace_root, 'algorithms', 'RSS_proposed'), ...
-        'e-lmpc',         fullfile(workspace_root, 'algorithms', 'RSS_sqp'), ...
-        'interior-point', fullfile(workspace_root, 'algorithms', 'RSS_fmincon') ...
+    algorithms_dir = fullfile(workspace_root, 'algorithms');
+    submodule_dirs = containers.Map( ...
+        'proposed-3iter', fullfile(algorithms_dir, 'RSS_proposed'), ...
+        'e-lmpc',         fullfile(algorithms_dir, 'RSS_sqp'), ...
+        'interior-point', fullfile(algorithms_dir, 'RSS_fmincon') ...
     );
 
     %% =====================================================
@@ -56,17 +57,17 @@ function summary = run_paper_baseline_case(config, scenario)
     % ======================================================
     switch algorithm
         case 'proposed-3iter'
-            addpath(submodule_paths.('proposed-3iter'));
+            addpath(submodule_dirs('proposed-3iter'));
             alg_params = feval('config');
-            rmpath(submodule_paths.('proposed-3iter'));
+            rmpath(submodule_dirs('proposed-3iter'));
         case 'e-lmpc'
-            addpath(submodule_paths.('e-lmpc'));
+            addpath(submodule_dirs('e-lmpc'));
             alg_params = feval('config');
-            rmpath(submodule_paths.('e-lmpc'));
+            rmpath(submodule_dirs('e-lmpc'));
         case 'interior-point'
-            addpath(submodule_paths.('interior-point'));
+            addpath(submodule_dirs('interior-point'));
             alg_params = feval('config');
-            rmpath(submodule_paths.('interior-point'));
+            rmpath(submodule_dirs('interior-point'));
         case 'active-set'
             alg_params = defaultConfig();
         otherwise

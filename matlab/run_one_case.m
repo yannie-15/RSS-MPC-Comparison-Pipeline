@@ -41,10 +41,11 @@ function summary = run_one_case(config, scenario)
     % 定位 submodule 路径
     script_dir = fileparts(mfilename('fullpath'));
     workspace_root = fileparts(script_dir);
-    submodule_paths = struct( ...
-        'proposed-3iter', fullfile(workspace_root, 'algorithms', 'RSS_proposed'), ...
-        'e-lmpc',         fullfile(workspace_root, 'algorithms', 'RSS_sqp'), ...
-        'interior-point', fullfile(workspace_root, 'algorithms', 'RSS_fmincon') ...
+    algorithms_dir = fullfile(workspace_root, 'algorithms');
+    submodule_dirs = containers.Map( ...
+        'proposed-3iter', fullfile(algorithms_dir, 'RSS_proposed'), ...
+        'e-lmpc',         fullfile(algorithms_dir, 'RSS_sqp'), ...
+        'interior-point', fullfile(algorithms_dir, 'RSS_fmincon') ...
     );
 
     %% =====================================================
@@ -103,10 +104,10 @@ function summary = run_one_case(config, scenario)
             switch algorithm
                 case 'proposed-3iter'
                     % RSS_proposed: [new_state_dot] = control_RSS(path, k, state_dot, state)
-                    addpath(submodule_paths.('proposed-3iter'));
+                    addpath(submodule_dirs('proposed-3iter'));
                     addpath(override_dir);  % 确保 main 的 config 覆盖 submodule 的 config
                     worldVelocity = control_RSS(path, k, lastBodyVelocity, state');
-                    rmpath(submodule_paths.('proposed-3iter'));
+                    rmpath(submodule_dirs('proposed-3iter'));
                     % 反推车体速度 (有 0.98 衰减, 近似)
                     R_bw = [cos(state(3)), sin(state(3)), 0;
                            -sin(state(3)), cos(state(3)), 0;
@@ -118,20 +119,20 @@ function summary = run_one_case(config, scenario)
 
                 case 'e-lmpc'
                     % RSS_sqp: [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state)
-                    addpath(submodule_paths.('e-lmpc'));
+                    addpath(submodule_dirs('e-lmpc'));
                     addpath(override_dir);  % 确保 main 的 config 覆盖 submodule 的 config
                     [worldVelocity, bodyVelocity, solve_time, ~] = ...
                         control_RSS(path, k, lastBodyVelocity, state');
-                    rmpath(submodule_paths.('e-lmpc'));
+                    rmpath(submodule_dirs('e-lmpc'));
                     % 反推 u(:,1) = bodyVelocity - lastBodyVelocity
                     u = bodyVelocity - lastBodyVelocity;
 
                 case 'interior-point'
                     % RSS_fmincon: [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state, params)
-                    addpath(submodule_paths.('interior-point'));
+                    addpath(submodule_dirs('interior-point'));
                     [worldVelocity, bodyVelocity, solve_time, ~] = ...
                         control_RSS(path, k, lastBodyVelocity, state', config);
-                    rmpath(submodule_paths.('interior-point'));
+                    rmpath(submodule_dirs('interior-point'));
                     u = bodyVelocity - lastBodyVelocity;
 
                 case 'active-set'
