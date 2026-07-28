@@ -138,6 +138,7 @@ main('seeds', 1:50, 'algorithms', {'proposed-3iter'}, 'forceRegen', true)
 - **proposed 算法**（RSS_proposed submodule）只输出 `new_state_dot`，缺少 `u` 和 `solve_time`，相关 metrics 记为 NaN，Table II 中求解时间列显示 N/A
 - 三个 submodule 的 `control_RSS.m` 接口各不相同，`run_one_case.m` 负责适配
 - submodule 内部调用各自的 `config.m`（无参函数），与项目的 `defaultConfig.m` 独立
+- **main 批量仿真时**，`run_one_case.m` 通过 `setup_config_override` 用临时目录的 `config.m` 覆盖 submodule 的 `config.m`，使 proposed/e-lmpc 能用到 main 传入的随机 seed 场景参数（ctrl_pts/vimax/phidotmax/Lx/Ly 等）；interior-point/active-set 直接接收外部 config
 
 ### 论文结果复现
 
