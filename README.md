@@ -50,31 +50,35 @@ RSS_V2/
 │   │ ── 工具 ────────────────────────────────────────────
 │   └── setup_paths.m              # 路径设置 (含 submodule 检查)
 │
-├── algorithms/                    # 本地算法实现
-│   └── control_active_set.m       # active-set (fmincon active-set)
-│
-├── third_party/                   # 外部引用 (git submodule)
+├── algorithms/                    # 所有算法 (统一目录)
+│   │
+│   │ ── git submodule (引用外部仓库, 不复制代码) ────────
 │   ├── RSS_proposed/              # → github.com/serendipitjx/RSS_proposed
 │   │   └── control_RSS.m          #   proposed (CVX+ECOS, 3 次迭代)
 │   ├── RSS_sqp/                   # → github.com/serendipitjx/RSS_sqp
 │   │   └── control_RSS.m          #   e-LMPC (fmincon SQP, MaxIter=1)
-│   └── RSS_fmincon/               # → github.com/serendipitjx/RSS_fmincon
-│       └── control_RSS.m          #   interior-point (fmincon interior-point)
+│   ├── RSS_fmincon/               # → github.com/serendipitjx/RSS_fmincon
+│   │   └── control_RSS.m          #   interior-point (fmincon interior-point)
+│   │
+│   │ ── 本地实现 (原仓库无此版本) ───────────────────────
+│   └── control_active_set.m       # active-set (fmincon active-set)
 │
-└── tests/                         # 单元测试
+├── third_party/                   # 第三方求解器源码 (参考)
+│   ├── blasfeo/                   # BLASFEO 线性代数库
+│   └── hpipm/                     # HPIPM QP 求解器
 ```
 
-> 本地运行仿真后还会生成 `results/`（输出结果）、`scenario_bank/`（预生成场景）两个目录，已在 `.gitignore` 中排除，不入库。
+> 本地运行仿真后还会生成 `results/`（输出结果）、`scenario_bank/`（预生成场景）两个目录。
 
 ## 算法引用架构（git submodule）
 
-三种算法通过 git submodule 以**引用**方式接入，不复制代码：
+四种算法**统一放在 `algorithms/` 目录**下，其中三种以 git submodule 引用外部仓库，active-set 为本地实现：
 
 | 算法 | 来源 | 接口 |
 |---|---|---|
-| proposed-3iter | `third_party/RSS_proposed/` | `[new_state_dot] = control_RSS(path, k, state_dot, state)` |
-| e-lmpc | `third_party/RSS_sqp/` | `[new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state)` |
-| interior-point | `third_party/RSS_fmincon/` | `[new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state, params)` |
+| proposed-3iter | `algorithms/RSS_proposed/` (submodule) | `[new_state_dot] = control_RSS(path, k, state_dot, state)` |
+| e-lmpc | `algorithms/RSS_sqp/` (submodule) | `[new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state)` |
+| interior-point | `algorithms/RSS_fmincon/` (submodule) | `[new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state, params)` |
 | active-set | `algorithms/control_active_set.m` (本地) | `[u, worldVelocity, bodyVelocity] = control_active_set(path, k, state_dot, state, config)` |
 
 `run_one_case.m` 按算法名动态切换 submodule 路径（`addpath`/`rmpath`），避免三个 `control_RSS.m` 和 `config.m` 同名冲突。
@@ -99,7 +103,7 @@ Step 1  生成 seed 列表        → (参数解析)
 Step 2  选择算法              → (参数解析)
 Step 3  检查断点续跑          → comparison_load()
 Step 4  运行批量仿真          → run_batch_simulation()
-                                └─ run_one_case()  按算法名分发到 submodule/本地
+                                └─ run_one_case()  按算法名分发到 algorithms/ 下
 Step 5  保存最终结果          → save_all_artifacts()
 Step 6  生成论文对比图        → plot_paper_comparison()
 Step 7  打印 Table II         → print_table_ii()

@@ -2,10 +2,10 @@ function summary = run_one_case(config, scenario)
 % RUN_ONE_CASE 运行单次闭环仿真并计算完整指标
 %
 % 算法调用架构:
-%   - proposed-3iter  → third_party/RSS_proposed/control_RSS.m  (git submodule)
-%   - e-lmpc          → third_party/RSS_sqp/control_RSS.m       (git submodule)
-%   - interior-point  → third_party/RSS_fmincon/control_RSS.m   (git submodule)
-%   - active-set      → algorithms/control_active_set.m          (本地实现)
+%   - proposed-3iter  → algorithms/RSS_proposed/control_RSS.m  (git submodule)
+%   - e-lmpc          → algorithms/RSS_sqp/control_RSS.m       (git submodule)
+%   - interior-point  → algorithms/RSS_fmincon/control_RSS.m   (git submodule)
+%   - active-set      → algorithms/control_active_set.m        (本地实现)
 %
 % 三个 submodule 的接口各不相同, 本函数负责适配:
 %   RSS_proposed:  [new_state_dot] = control_RSS(path, k, state_dot, state)
@@ -36,9 +36,9 @@ function summary = run_one_case(config, scenario)
     script_dir = fileparts(mfilename('fullpath'));
     workspace_root = fileparts(script_dir);
     submodule_paths = struct( ...
-        'proposed-3iter', fullfile(workspace_root, 'third_party', 'RSS_proposed'), ...
-        'e-lmpc',         fullfile(workspace_root, 'third_party', 'RSS_sqp'), ...
-        'interior-point', fullfile(workspace_root, 'third_party', 'RSS_fmincon') ...
+        'proposed-3iter', fullfile(workspace_root, 'algorithms', 'RSS_proposed'), ...
+        'e-lmpc',         fullfile(workspace_root, 'algorithms', 'RSS_sqp'), ...
+        'interior-point', fullfile(workspace_root, 'algorithms', 'RSS_fmincon') ...
     );
 
     %% =====================================================

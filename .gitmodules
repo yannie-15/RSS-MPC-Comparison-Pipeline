@@ -1,9 +1,9 @@
-[submodule "third_party/RSS_proposed"]
-	path = third_party/RSS_proposed
+[submodule "algorithms/RSS_proposed"]
+	path = algorithms/RSS_proposed
 	url = https://github.com/serendipitjx/RSS_proposed.git
-[submodule "third_party/RSS_sqp"]
-	path = third_party/RSS_sqp
+[submodule "algorithms/RSS_sqp"]
+	path = algorithms/RSS_sqp
 	url = https://github.com/serendipitjx/RSS_sqp.git
-[submodule "third_party/RSS_fmincon"]
-	path = third_party/RSS_fmincon
+[submodule "algorithms/RSS_fmincon"]
+	path = algorithms/RSS_fmincon
 	url = https://github.com/serendipitjx/RSS_fmincon.git
