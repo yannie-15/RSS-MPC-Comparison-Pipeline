@@ -136,9 +136,9 @@ function summary = run_paper_baseline_case(config, scenario)
             switch algorithm
                 case 'proposed-3iter'
                     % RSS_proposed: [new_state_dot] = control_RSS(path, k, state_dot, state)
-                    addpath(submodule_paths.('proposed-3iter'));
+                    addpath(submodule_dirs('proposed-3iter'));
                     worldVelocity = control_RSS(path, k, lastBodyVelocity, state');
-                    rmpath(submodule_paths.('proposed-3iter'));
+                    rmpath(submodule_dirs('proposed-3iter'));
                     % 反推车体速度 (有 0.98 衰减, 近似)
                     R_bw = [cos(state(3)), sin(state(3)), 0;
                            -sin(state(3)), cos(state(3)), 0;
@@ -151,18 +151,18 @@ function summary = run_paper_baseline_case(config, scenario)
 
                 case 'e-lmpc'
                     % RSS_sqp: [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state)
-                    addpath(submodule_paths.('e-lmpc'));
+                    addpath(submodule_dirs('e-lmpc'));
                     [worldVelocity, bodyVelocity, solve_time, iter_num] = ...
                         control_RSS(path, k, lastBodyVelocity, state');
-                    rmpath(submodule_paths.('e-lmpc'));
+                    rmpath(submodule_dirs('e-lmpc'));
                     u = bodyVelocity - lastBodyVelocity;
 
                 case 'interior-point'
                     % RSS_fmincon: [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state, params)
-                    addpath(submodule_paths.('interior-point'));
+                    addpath(submodule_dirs('interior-point'));
                     [worldVelocity, bodyVelocity, solve_time, iter_num] = ...
                         control_RSS(path, k, lastBodyVelocity, state', config);
-                    rmpath(submodule_paths.('interior-point'));
+                    rmpath(submodule_dirs('interior-point'));
                     u = bodyVelocity - lastBodyVelocity;
 
                 case 'active-set'
