@@ -139,6 +139,49 @@ main('seeds', 1:50, 'algorithms', {'proposed-3iter'}, 'forceRegen', true)
 - 三个 submodule 的 `control_RSS.m` 接口各不相同，`run_one_case.m` 负责适配
 - submodule 内部调用各自的 `config.m`（无参函数），与项目的 `defaultConfig.m` 独立
 
+### 论文结果复现
+
+运行 [paper_reproduction.m](matlab/paper_reproduction.m) 可复现论文 Section IV 的固定轨迹实验，无需 seed，使用论文写死的参数：
+
+```matlab
+cd('d:\PROJECT\RSS_V2\matlab'); setup_paths;
+paper_reproduction
+```
+
+**论文固定参数**（已内置于脚本，不可配置）：
+
+| 参数 | 值 | 说明 |
+|---|---|---|
+| Bezier 控制点 | `[(0,0), (0.75,0.25), (0.25,0.75), (1.25,-1), (1,0)]` | 参考轨迹 |
+| 轨迹时长 | 1 s | 闭环时长 |
+| 采样周期 | 0.01 s | 共 100 步 |
+| MPC 预测时域 | K=6 | |
+| 底盘尺寸 | 0.655 m × 0.335 m | |
+| 最大轮速 | 5 m/s | |
+| 最大转向速率 | 5π rad/s | |
+| 初始位姿 | `[0.05, 0.1, 0.2]` | |
+| 初始速度 | `[0.01, 0.01, 0.01]` | |
+| Q | diag(30, 30, 1) | 状态权重 |
+| R | diag(0.3, 0.3, 0.3) | 控制权重 |
+| 姿态变化 | 按归一化弧长平方从 0 → 2π | |
+
+**算法**：proposed-3iter、e-lmpc、active-set、interior-point（4 种全部跑）
+
+**与 main.m 的区别**：
+- `main.m` 用 `scenario_bank(seed)` 生成随机场景（Latin 超立方采样），用于批量统计
+- `paper_reproduction.m` 用上述固定参数，无随机性，可精确复现论文结果
+
+**输出**（写入 `results/paper_reproduction/`）：
+- `per_algorithm/{算法名}/{算法名}_summary.png` — 单算法汇总图
+- `per_algorithm/{算法名}/seed_0001.png` — 逐 seed 轨迹图
+- `{算法名}_results.csv` — 单算法指标 CSV
+- `paper_reproduction.mat` — 完整 comparison 结构体
+
+**额外诊断**（相比 `run_one_case.m`，由 `run_paper_baseline_case.m` 提供）：
+- 每步 `iter_num`（求解器迭代数，proposed/active-set 为 NaN）
+- 解的有限性检查（NaN/Inf 标记失败步）
+- warm-up 排除后的中位数/分位数耗时（P1-4 复现要求）
+
 ## 算法说明
 
 | 算法 | 求解器 | 来源 | 特点 |
