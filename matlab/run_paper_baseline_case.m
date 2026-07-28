@@ -84,6 +84,7 @@ function summary = run_paper_baseline_case(config, scenario)
     num_steps = config.num_steps;
     num_wheels = size(config.wheel_pos, 1);
 
+    % 路径生成 (所有算法参数已统一为 m 单位, 路径点数用各自 config.num_path_pts)
     path = generateReference(config, config.num_path_pts);
 
     if isfield(scenario, 'initialState') && ~isempty(scenario.initialState)
@@ -136,6 +137,10 @@ function summary = run_paper_baseline_case(config, scenario)
             switch algorithm
                 case 'proposed-3iter'
                     % RSS_proposed: [new_state_dot] = control_RSS(path, k, state_dot, state)
+                    % 注: control_RSS 内部使用 global K/H/R/xInit, 多步调用间会残留。
+                    % 每步前清理这些 global 变量, 与原始 main.m 的 clear all 效果一致。
+                    cvx_clear;
+                    clear K H R xInit
                     addpath(submodule_dirs('proposed-3iter'));
                     worldVelocity = control_RSS(path, k, lastBodyVelocity, state');
                     rmpath(submodule_dirs('proposed-3iter'));
@@ -144,7 +149,7 @@ function summary = run_paper_baseline_case(config, scenario)
                            -sin(state(3)), cos(state(3)), 0;
                             0,             0,             1];
                     bodyVelocity = R_bw * worldVelocity;
-                    % u 无法精确获取 (0.98 衰减), 记为 NaN
+                    % RSS_proposed 接口不返回 u, 记为 NaN (不影响主流程)
                     u = NaN(3, 1);
                     solve_time = NaN;  % submodule 不输出 solve_time
                     iter_num = NaN;    % submodule 不输出 iter_num
@@ -190,10 +195,13 @@ function summary = run_paper_baseline_case(config, scenario)
                 fail_reason = 'worldVelocity contains NaN/Inf';
             end
 
-            if any(isnan(u(:))) || any(isinf(u(:)))
-                step_ok = false;
-                if isempty(fail_reason)
-                    fail_reason = 'u contains NaN/Inf';
+            % u 检查: proposed-3iter 接口不返回 u (记为 NaN), 跳过 u 的有限性检查
+            if ~strcmp(algorithm, 'proposed-3iter')
+                if any(isnan(u(:))) || any(isinf(u(:)))
+                    step_ok = false;
+                    if isempty(fail_reason)
+                        fail_reason = 'u contains NaN/Inf';
+                    end
                 end
             end
 
@@ -218,7 +226,14 @@ function summary = run_paper_baseline_case(config, scenario)
 
             % 推进状态
             state = propagateState(state, worldVelocity, config);
-            lastBodyVelocity = bodyVelocity;
+            % RSS_proposed 的 control_RSS 期望传入 world frame 速度 (state_dot),
+            % 与其原始 main.m 一致 (main.m 第 65 行 state_dot = new_state_dot)。
+            % 其他算法 (e-lmpc/interior-point) 的 control_RSS 期望 body frame 速度。
+            if strcmp(algorithm, 'proposed-3iter')
+                lastBodyVelocity = worldVelocity;
+            else
+                lastBodyVelocity = bodyVelocity;
+            end
             states(:, k+1) = state;
 
         catch ME

@@ -61,9 +61,14 @@ function comparison = paper_reproduction()
     results_dir = fullfile(workspace_root, 'results', 'paper_reproduction');
     % 清空旧结果，确保图片被覆盖而非残留
     if exist(results_dir, 'dir')
-        rmdir(results_dir, 's');
+        try
+            rmdir(results_dir, 's');
+        catch
+            warning('paper_reproduction:cleanFailed', ...
+                '无法清空旧结果目录 (文件可能被占用), 将覆盖写入。\n请关闭占用该目录的程序后重试。');
+        end
     end
-    mkdir(results_dir);
+    if ~exist(results_dir, 'dir'), mkdir(results_dir); end
 
     %% =====================================================
     % 4. 初始化 comparison 结构体 (与 compare_algorithms 一致)

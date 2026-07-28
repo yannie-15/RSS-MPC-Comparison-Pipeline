@@ -1,2 +1,2 @@
 seed,algorithm,success,rmse,trajectoryCost,meanSolveTime,maxSolveTime,totalSolveTime,medianSolveTime,q1SolveTime,q3SolveTime,wheelSpeedViolationRatio,maxWheelSpeedViolation,steeringRateViolationRatio,maxSteeringRateViolation,successRate,validStepRate,elapsedTime
-1,active-set,1,0.0292277052707041,13.6059130654229,0.044501435,0.8157891,4.4501435,0.0174593,0.01216325,0.026910625,0,1.78892161528665e-07,0.00505050505050505,235.839334953833,1,1,4.5602062
+1,proposed-3iter,1,29.3982171958806,1598189.22420254,NaN,NaN,NaN,NaN,NaN,NaN,0.691666666666667,575.004794747443,0.957627118644068,36.5488318438363,1,1,247.4609869
