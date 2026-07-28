@@ -1,19 +1,21 @@
 function summary = run_paper_baseline_case(config, scenario)
-% RUN_PAPER_BASELINE_CASE 基线专用闭环仿真 runner (论文 Section IV 复现)
+% RUN_PAPER_BASELINE_CASE 闭环仿真 runner (论文 Section IV 复现)
 %
 % 与 run_one_case 的区别:
 %   1. 计算 warm-up 排除后的中位数耗时 (P1-4 复现要求)
 %   2. 记录每步 iter_num (submodule 返回的求解器迭代数)
 %   3. 检查解的有限性 (NaN/Inf) 标记失败步
-%   4. 仅支持基线算法: e-lmpc, active-set, interior-point
+%   4. 支持全部 4 种算法: proposed-3iter, e-lmpc, active-set, interior-point
 %
 % 算法调用架构 (与 run_one_case 一致):
+%   - proposed-3iter  → algorithms/RSS_proposed/control_RSS.m  (git submodule)
 %   - e-lmpc          → algorithms/RSS_sqp/control_RSS.m       (git submodule)
 %   - interior-point  → algorithms/RSS_fmincon/control_RSS.m   (git submodule)
 %   - active-set      → algorithms/control_active_set.m        (本地实现)
 %
 % 注: submodule 接口不返回 exitflag/warmstarted, 相关字段记为 NaN/false。
 %     iter_num 从 submodule 的第 4 个输出获取 (e-lmpc/interior-point)。
+%     RSS_proposed 只输出 new_state_dot, 缺失的 u/solve_time/iter_num 记为 NaN。
 %
 % 输出额外字段:
 %   summary.solverInfo: 每步的 iterations/finite/stepFailed
@@ -43,6 +45,7 @@ function summary = run_paper_baseline_case(config, scenario)
     script_dir = fileparts(mfilename('fullpath'));
     workspace_root = fileparts(script_dir);
     submodule_paths = struct( ...
+        'proposed-3iter', fullfile(workspace_root, 'algorithms', 'RSS_proposed'), ...
         'e-lmpc',         fullfile(workspace_root, 'algorithms', 'RSS_sqp'), ...
         'interior-point', fullfile(workspace_root, 'algorithms', 'RSS_fmincon') ...
     );
@@ -103,6 +106,21 @@ function summary = run_paper_baseline_case(config, scenario)
             % 按算法名分发 (与 run_one_case 一致, 但不使用外层 tic/toc 计时,
             % 而是使用 submodule 返回的 solve_time, 更准确)
             switch algorithm
+                case 'proposed-3iter'
+                    % RSS_proposed: [new_state_dot] = control_RSS(path, k, state_dot, state)
+                    addpath(submodule_paths.('proposed-3iter'));
+                    worldVelocity = control_RSS(path, k, lastBodyVelocity, state');
+                    rmpath(submodule_paths.('proposed-3iter'));
+                    % 反推车体速度 (有 0.98 衰减, 近似)
+                    R_bw = [cos(state(3)), sin(state(3)), 0;
+                           -sin(state(3)), cos(state(3)), 0;
+                            0,             0,             1];
+                    bodyVelocity = R_bw * worldVelocity;
+                    % u 无法精确获取 (0.98 衰减), 记为 NaN
+                    u = NaN(3, 1);
+                    solve_time = NaN;  % submodule 不输出 solve_time
+                    iter_num = NaN;    % submodule 不输出 iter_num
+
                 case 'e-lmpc'
                     % RSS_sqp: [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state)
                     addpath(submodule_paths.('e-lmpc'));
@@ -129,7 +147,7 @@ function summary = run_paper_baseline_case(config, scenario)
 
                 otherwise
                     error('run_paper_baseline_case:UnsupportedAlgorithm', ...
-                        '仅支持基线算法 (e-lmpc/active-set/interior-point), 收到: %s', algorithm);
+                        '不支持算法: %s', algorithm);
             end
 
             solveTimes(k) = solve_time;

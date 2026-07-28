@@ -1,7 +1,8 @@
 function comparison = paper_reproduction()
 % PAPER_REPRODUCTION  论文 Section IV 固定轨迹实验复现
 %
-% 使用论文 Section IV 的固定参数对三种对比算法进行仿真:
+% 使用论文 Section IV 的固定参数对四种算法进行仿真:
+%   - proposed-3iter
 %   - e-lmpc
 %   - active-set
 %   - interior-point
@@ -34,7 +35,7 @@ function comparison = paper_reproduction()
     %% =====================================================
     % 2. 论文固定参数
     % ======================================================
-    algorithms = {'e-lmpc', 'active-set', 'interior-point'};
+    algorithms = {'proposed-3iter', 'e-lmpc', 'active-set', 'interior-point'};
     num_algorithms = length(algorithms);
 
     fprintf('========================================\n');

@@ -20,7 +20,7 @@ RSS_V2/
 │   │ ── 核心仿真 ────────────────────────────────────────
 │   ├── run_batch_simulation.m     # (seed × algorithm) 批量仿真循环
 │   ├── run_one_case.m             # 单场景闭环仿真, 按算法名分发到 submodule
-│   ├── run_paper_baseline_case.m  # 基线专用仿真 (含 iter_num 跟踪与解有限性检查)
+│   ├── run_paper_baseline_case.m  # 论文复现专用仿真 (含 iter_num 跟踪与解有限性检查, 4 种算法)
 │   │
 │   │ ── 查询辅助 ────────────────────────────────────────
 │   ├── pair_is_completed.m        # 判断 (seed, alg) 是否已成功
