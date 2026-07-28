@@ -10,7 +10,6 @@ RSS_V2/
 │   │
 │   │ ── 主入口与编排 ──────────────────────────────────────
 │   ├── main.m                     # 主入口, 按步骤编排 (Step 0-7)
-│   ├── compare_algorithms.m       # [兼容包装] 旧入口, 转调 main
 │   ├── paper_reproduction.m       # 论文 Section IV 复现独立脚本
 │   │
 │   │ ── 状态管理 ────────────────────────────────────────
@@ -21,7 +20,7 @@ RSS_V2/
 │   │ ── 核心仿真 ────────────────────────────────────────
 │   ├── run_batch_simulation.m     # (seed × algorithm) 批量仿真循环
 │   ├── run_one_case.m             # 单场景闭环仿真, 按算法名分发到 submodule
-│   ├── run_paper_baseline_case.m  # 基线专用仿真 (含 exitflag 跟踪)
+│   ├── run_paper_baseline_case.m  # 基线专用仿真 (含 iter_num 跟踪与解有限性检查)
 │   │
 │   │ ── 查询辅助 ────────────────────────────────────────
 │   ├── pair_is_completed.m        # 判断 (seed, alg) 是否已成功
