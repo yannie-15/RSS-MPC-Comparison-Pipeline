@@ -167,7 +167,7 @@ function save_all_artifacts(comparison, results_dir)
 %SAVE_ALL_ARTIFACTS  保存最终 comparison_final.mat 并同步更新 checkpoint
 %
 % 注意: 每个算法的 summary 图与 CSV 已在 run_batch_simulation 内部,
-%       该算法所有 seed 完成后即时生成 (与原 compare_algorithms.m 行为一致)。
+%       该算法所有 seed 完成后即时生成。
 %       逐 seed 轨迹图由 replot_per_seed.m 单独处理。
 %       此函数只负责收尾: 写 final.mat + 更新 checkpoint (不修改 checkpoint 逻辑)。
 

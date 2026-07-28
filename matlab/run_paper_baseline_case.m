@@ -1,23 +1,26 @@
 function summary = run_paper_baseline_case(config, scenario)
-% RUN_PAPER_BASELINE_CASE 基线专用闭环仿真 runner
+% RUN_PAPER_BASELINE_CASE 基线专用闭环仿真 runner (论文 Section IV 复现)
 %
 % 与 run_one_case 的区别:
-%   1. 捕获 solver_info (exitflag, iterations, finite)
-%   2. 根据 exitflag < 0 或非有限解标记步骤失败
-%   3. 记录每步 exitflag 和约束残差
-%   4. 计算 warm-up 排除后的中位数耗时 (P1-4)
-%   5. 仅支持基线算法: e-lmpc, active-set, interior-point
+%   1. 计算 warm-up 排除后的中位数耗时 (P1-4 复现要求)
+%   2. 记录每步 iter_num (submodule 返回的求解器迭代数)
+%   3. 检查解的有限性 (NaN/Inf) 标记失败步
+%   4. 仅支持基线算法: e-lmpc, active-set, interior-point
 %
-% 输入/输出格式与 run_one_case 一致, 额外增加:
-%   summary.solverInfo: 每步的 exitflag/iterations/finite/warmstarted
-%   summary.stepDiagnostics: 每步约束残差
-%   summary.timing.medianSolveTime: warm-up 后中位数
-%   summary.timing.warmupExcluded: 排除的前 N 步
+% 算法调用架构 (与 run_one_case 一致):
+%   - e-lmpc          → algorithms/RSS_sqp/control_RSS.m       (git submodule)
+%   - interior-point  → algorithms/RSS_fmincon/control_RSS.m   (git submodule)
+%   - active-set      → algorithms/control_active_set.m        (本地实现)
+%
+% 注: submodule 接口不返回 exitflag/warmstarted, 相关字段记为 NaN/false。
+%     iter_num 从 submodule 的第 4 个输出获取 (e-lmpc/interior-point)。
+%
+% 输出额外字段:
+%   summary.solverInfo: 每步的 iterations/finite/stepFailed
+%   summary.timing: warm-up 排除后的中位数/分位数耗时
 %
 % 用法:
 %   summary = run_paper_baseline_case(cfg, scen)
-%
-% 独立脚本: 删除本文件不影响 run_one_case 和 compare_algorithms。
 
     if nargin < 1 || isempty(config)
         config = defaultConfig();
@@ -27,23 +30,22 @@ function summary = run_paper_baseline_case(config, scenario)
         scenario.name = 'paper_fixed';
     end
 
-    % 确保 scenario 有必要字段
     if ~isfield(scenario, 'name'), scenario.name = 'unnamed'; end
     if ~isfield(scenario, 'id'), scenario.id = 0; end
 
+    if ~isfield(config, 'algorithm') || isempty(config.algorithm)
+        config.algorithm = 'e-lmpc';
+    end
+
     algorithm = lower(config.algorithm);
 
-    switch algorithm
-        case 'e-lmpc'
-            controller_fn = @control_eLMPC;
-        case 'active-set'
-            controller_fn = @control_active_set;
-        case 'interior-point'
-            controller_fn = @control_interior_point;
-        otherwise
-            error('run_paper_baseline_case:UnsupportedAlgorithm', ...
-                '仅支持基线算法, 收到: %s', algorithm);
-    end
+    % 定位 submodule 路径 (与 run_one_case 一致)
+    script_dir = fileparts(mfilename('fullpath'));
+    workspace_root = fileparts(script_dir);
+    submodule_paths = struct( ...
+        'e-lmpc',         fullfile(workspace_root, 'algorithms', 'RSS_sqp'), ...
+        'interior-point', fullfile(workspace_root, 'algorithms', 'RSS_fmincon') ...
+    );
 
     %% =====================================================
     % 参数提取
@@ -77,16 +79,12 @@ function summary = run_paper_baseline_case(config, scenario)
 
     solveTimes = zeros(1, num_steps);
 
-    % 每步求解器诊断
-    stepExitflags = zeros(1, num_steps);
-    stepIterations = zeros(1, num_steps);
-    stepFinite = true(1, num_steps);
-    stepWarmstarted = false(1, num_steps);
+    % 每步求解器诊断 (submodule 接口限制, 部分字段记为 NaN)
+    stepExitflags = NaN(1, num_steps);       % submodule 不返回 exitflag
+    stepIterations = zeros(1, num_steps);    % 从 submodule 第 4 输出获取
+    stepFinite = true(1, num_steps);         % 自己检查 NaN/Inf
+    stepWarmstarted = false(1, num_steps);   % submodule 不返回
     stepFailed = false(1, num_steps);
-
-    % 全局求解时间变量 (由控制器写入)
-    global solver_time_array;
-    solver_time_array = [];
 
     success = true;
     failureReason = '';
@@ -102,54 +100,69 @@ function summary = run_paper_baseline_case(config, scenario)
         step_tic = tic;
 
         try
-            % 基线控制器返回 4 个输出: u, worldVel, bodyVel, solver_info
-            [u, worldVelocity, bodyVelocity, solver_info] = controller_fn( ...
-                path, k, lastBodyVelocity, state', config ...
-            );
+            % 按算法名分发 (与 run_one_case 一致, 但不使用外层 tic/toc 计时,
+            % 而是使用 submodule 返回的 solve_time, 更准确)
+            switch algorithm
+                case 'e-lmpc'
+                    % RSS_sqp: [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state)
+                    addpath(submodule_paths.('e-lmpc'));
+                    [worldVelocity, bodyVelocity, solve_time, iter_num] = ...
+                        control_RSS(path, k, lastBodyVelocity, state');
+                    rmpath(submodule_paths.('e-lmpc'));
+                    u = bodyVelocity - lastBodyVelocity;
 
-            step_time = toc(step_tic);
-            solveTimes(k) = step_time;
+                case 'interior-point'
+                    % RSS_fmincon: [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state, params)
+                    addpath(submodule_paths.('interior-point'));
+                    [worldVelocity, bodyVelocity, solve_time, iter_num] = ...
+                        control_RSS(path, k, lastBodyVelocity, state', config);
+                    rmpath(submodule_paths.('interior-point'));
+                    u = bodyVelocity - lastBodyVelocity;
 
-            % 记录 solver_info
-            stepExitflags(k) = solver_info.exitflag;
-            stepIterations(k) = solver_info.iterations;
-            stepFinite(k) = solver_info.finite;
-            if isfield(solver_info, 'warmstarted')
-                stepWarmstarted(k) = solver_info.warmstarted;
+                case 'active-set'
+                    % 本地: [u, worldVelocity, bodyVelocity] = control_active_set(path, k, state_dot, state, config)
+                    [u_full, worldVelocity, bodyVelocity] = ...
+                        control_active_set(path, k, lastBodyVelocity, state', config);
+                    u = u_full(:, 1);
+                    solve_time = toc(step_tic);  % 本地版本不输出 solve_time, 用外层计时
+                    iter_num = NaN;
+
+                otherwise
+                    error('run_paper_baseline_case:UnsupportedAlgorithm', ...
+                        '仅支持基线算法 (e-lmpc/active-set/interior-point), 收到: %s', algorithm);
             end
 
-            % [P1-3] 检查求解是否真正成功
+            solveTimes(k) = solve_time;
+            stepIterations(k) = iter_num;
+
+            % [P1-3] 检查解的有限性
             step_ok = true;
             fail_reason = '';
 
-            if solver_info.exitflag < 0
+            if any(isnan(worldVelocity(:))) || any(isinf(worldVelocity(:)))
                 step_ok = false;
-                fail_reason = sprintf('exitflag=%d', solver_info.exitflag);
-            end
-
-            if ~solver_info.finite
-                step_ok = false;
-                if isempty(fail_reason)
-                    fail_reason = 'solution contains NaN/Inf';
-                end
+                fail_reason = 'worldVelocity contains NaN/Inf';
             end
 
             if any(isnan(u(:))) || any(isinf(u(:)))
                 step_ok = false;
-                fail_reason = 'u contains NaN/Inf';
+                if isempty(fail_reason)
+                    fail_reason = 'u contains NaN/Inf';
+                end
             end
+
+            stepFinite(k) = step_ok;
 
             if ~step_ok
                 stepFailed(k) = true;
-                fprintf('[Step %d: %s] 求解器诊断: %s (exitflag=%d, finite=%d)\n', ...
-                    k, algorithm, fail_reason, solver_info.exitflag, solver_info.finite);
-                % 仍继续执行 (用回退 u 或解出的 u), 但记录为失败步
+                fprintf('[Step %d: %s] 求解器诊断: %s\n', k, algorithm, fail_reason);
+                % 仍继续执行, 但记录为失败步
             end
 
             % 执行控制
             [wheelSpeed, wheelAngle] = computeWheelOutputs(bodyVelocity, config);
 
-            executedU(:, k) = u(:, 1);
+            executedU(:, k) = u;
             states(:, k) = state;
             worldVelocities(:, k) = worldVelocity;
             bodyVelocities(:, k) = bodyVelocity;
@@ -163,8 +176,7 @@ function summary = run_paper_baseline_case(config, scenario)
             states(:, k+1) = state;
 
         catch ME
-            step_time = toc(step_tic);
-            solveTimes(k) = step_time;
+            solveTimes(k) = toc(step_tic);
             stepFailed(k) = true;
             stepExitflags(k) = -999;
             stepFinite(k) = false;
@@ -215,7 +227,7 @@ function summary = run_paper_baseline_case(config, scenario)
         solveTimes, wheelSpeeds, wheelAngles, executedU);
     metrics.successRate = solved_count / num_steps;
 
-    % [P1-3] 步骤级成功率: exitflag >= 0 且有限解
+    % [P1-3] 步骤级成功率: 解有限且未标记失败
     n_valid_steps = sum(~stepFailed);
     metrics.validStepRate = n_valid_steps / max(solved_count, 1);
 
@@ -260,7 +272,7 @@ function summary = run_paper_baseline_case(config, scenario)
     summary.metrics = metrics;
     summary.numWheels = num_wheels;
 
-    % [P1-3] 每步求解器诊断
+    % [P1-3] 每步求解器诊断 (submodule 接口限制, exitflag/warmstarted 为 NaN/false)
     summary.solverInfo = struct();
     summary.solverInfo.exitflags = stepExitflags;
     summary.solverInfo.iterations = stepIterations;
@@ -289,17 +301,20 @@ function summary = run_paper_baseline_case(config, scenario)
             algorithm, scenario.name, first_fail_step, num_steps, failureReason);
     end
 
-    % 打印 exitflag 分布
+    % 打印 iterations 分布 (替代原 exitflag 分布)
     if solved_count > 0
-        unique_flags = unique(stepExitflags);
-        fprintf('  exitflag 分布: ');
-        for fi = 1:length(unique_flags)
-            n_flag = sum(stepExitflags == unique_flags(fi));
-            fprintf('%d→%d步  ', unique_flags(fi), n_flag);
+        valid_iters = stepIterations(~isnan(stepIterations));
+        if ~isempty(valid_iters)
+            unique_iters = unique(valid_iters);
+            fprintf('  iterations 分布: ');
+            for fi = 1:length(unique_iters)
+                n_iter = sum(stepIterations == unique_iters(fi));
+                fprintf('%d→%d步  ', unique_iters(fi), n_iter);
+            end
+            fprintf('\n');
         end
-        fprintf('\n');
         if sum(stepFailed) > 0
-            fprintf('  失败步 (exitflag<0 或非有限): %d/%d\n', sum(stepFailed), solved_count);
+            fprintf('  失败步 (解非有限): %d/%d\n', sum(stepFailed), solved_count);
         end
     end
 end

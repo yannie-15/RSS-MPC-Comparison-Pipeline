@@ -1,10 +1,9 @@
 function comparison = run_batch_simulation(comparison, seeds, algorithms, force_regen, checkpoint_file)
 %RUN_BATCH_SIMULATION  核心 (seed × algorithm) 批量仿真循环
 %
-% 不修改 checkpoint 逻辑, 仅是把原 compare_algorithms.m 中第 3 段 "逐 seed × 逐算法运行"
-% 抽出为独立函数, 便于 main.m 编排调用。
+% (seed × algorithm) 双层循环, 供 main.m 编排调用。
 %
-% 设计要点 (与原行为完全一致):
+% 设计要点:
 %   - 外层遍历算法, 内层遍历 seed
 %   - 切换算法时 clear functions 重置 e-LMPC warm start
 %   - 已成功完成的 (seed, alg) 跳过; 失败的允许重跑
