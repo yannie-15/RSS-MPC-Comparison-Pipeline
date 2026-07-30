@@ -38,6 +38,7 @@ RSS_V2/
 │   ├── propagateState.m           # 状态传播
 │   ├── computeWheelOutputs.m      # 轮速 / 轮角计算
 │   ├── computeMetrics.m           # RMSE / J / 求解时间 / 约束违反率
+│   ├── verify_constraints_RSS.m   # SQP约束验证 (每次子迭代原始约束重检)
 │   │
 │   │ ── 可视化与导出 ────────────────────────────────────
 │   ├── plot_one_algorithm.m       # 单算法 summary 图
@@ -53,8 +54,7 @@ RSS_V2/
 │   │
 │   │ ── git submodule (引用外部仓库, 不复制代码) ────────
 │   ├── RSS_proposed/              # → github.com/serendipitjx/RSS_proposed
-│   │   ├── control_RSS.m          #   proposed (CVX+SDPT3, 3 次迭代)
-│   │   └── verify_constraints_RSS.m  # 约束验证脚本 (SQP每次子迭代原始约束重检)
+│   │   └── control_RSS.m          #   proposed (CVX+SDPT3, 3 次迭代)
 │   ├── RSS_sqp/                   # → github.com/serendipitjx/RSS_sqp
 │   │   └── control_RSS.m          #   e-LMPC (fmincon SQP, MaxIter=1)
 │   ├── RSS_fmincon/               # → github.com/serendipitjx/RSS_fmincon
@@ -211,7 +211,7 @@ paper_reproduction({'e-lmpc','active-set'})         % 只重跑指定算法, 保
 
 ## 约束验证（verify_constraints_RSS）
 
-[verify_constraints_RSS.m](algorithms/RSS_proposed/verify_constraints_RSS.m) 用于验证 RSS proposed 算法在 SQP 求解过程中是否满足**原始问题约束**（不仅仅是最终输出轨迹）。
+[verify_constraints_RSS.m](matlab/verify_constraints_RSS.m) 用于验证 RSS proposed 算法在 SQP 求解过程中是否满足**原始问题约束**（不仅仅是最终输出轨迹）。
 
 ### 背景
 
@@ -227,7 +227,8 @@ RSS proposed 算法包含两类约束：
 ### 用法
 
 ```matlab
-cd('D:\PROJECT\RSS_V2\algorithms\RSS_proposed')
+cd('D:\PROJECT\RSS_V2\matlab')
+setup_paths;
 verify_constraints_RSS
 ```
 
@@ -245,7 +246,7 @@ verify_constraints_RSS
 - 命令窗口打印每次违反的详细信息（步号、迭代号、轮编号、超出量）
 - 汇总报告：求解器失败率、轮速违反次数/最大超出量、转角违反次数/最大超出量
 - 按 SQP 子迭代的分组分析
-- `constraint_verification_results.mat`：完整验证数据
+- `constraint_verification_results.mat`：完整验证数据（保存到 `results/` 目录）
 
 ## 仿真步数说明
 
