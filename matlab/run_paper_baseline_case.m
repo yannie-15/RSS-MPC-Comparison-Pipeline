@@ -79,6 +79,31 @@ function summary = run_paper_baseline_case(config, scenario)
     config = alg_params;
 
     %% =====================================================
+    % 循环外一次性 addpath 当前算法的 submodule
+    % 避免循环内 addpath/rmpath 切换导致 control_RSS 函数缓存混乱
+    % (此前 clear functions 不足以解决多版本同名函数解析冲突)
+    % ======================================================
+    switch algorithm
+        case {'proposed-3iter', 'e-lmpc', 'interior-point'}
+            addpath(submodule_dirs(algorithm));
+            % onCleanup: 函数退出时自动 rmpath, 避免路径残留影响后续算法
+            sub_to_remove = submodule_dirs(algorithm);
+            cleanup_obj = onCleanup(@() rmpath(sub_to_remove));
+            clear functions  % 清除残留的 control_RSS 解析, 确保用到当前 submodule 版本
+            % proposed-3iter: ECOS 2.0.10 在 R2026a 上对此 problem segfault,
+            % 全局兜底设为 SDPT3 (submodule control_RSS.m 内部 cvx_solver SDPT3 与此一致)
+            if strcmp(algorithm, 'proposed-3iter')
+                try
+                    cvx_clear;
+                    cvx_solver sdpt3;
+                    fprintf('[proposed-3iter] 全局 CVX solver 已设为 SDPT3 (兜底, 防 ECOS segfault)\n');
+                catch err
+                    fprintf('[proposed-3iter] 警告: 设置全局 CVX solver 失败: %s\n', err.message);
+                end
+            end
+    end
+
+    %% =====================================================
     % 参数提取
     % ======================================================
     num_steps = config.num_steps;
@@ -136,38 +161,50 @@ function summary = run_paper_baseline_case(config, scenario)
             % 而是使用 submodule 返回的 solve_time, 更准确)
             switch algorithm
                 case 'proposed-3iter'
-                    % RSS_proposed: [new_state_dot] = control_RSS(path, k, state_dot, state)
-                    % 注: control_RSS 内部使用 global K/H/R/xInit, 多步调用间会残留。
-                    % 每步前清理这些 global 变量, 与原始 main.m 的 clear all 效果一致。
-                    cvx_clear;
-                    clear K H R xInit
-                    addpath(submodule_dirs('proposed-3iter'));
-                    worldVelocity = control_RSS(path, k, lastBodyVelocity, state');
-                    rmpath(submodule_dirs('proposed-3iter'));
-                    % 反推车体速度 (有 0.98 衰减, 近似)
-                    R_bw = [cos(state(3)), sin(state(3)), 0;
-                           -sin(state(3)), cos(state(3)), 0;
-                            0,             0,             1];
-                    bodyVelocity = R_bw * worldVelocity;
-                    % RSS_proposed 接口不返回 u, 记为 NaN (不影响主流程)
-                    u = NaN(3, 1);
-                    solve_time = NaN;  % submodule 不输出 solve_time
+                    % RSS_proposed 0121: [u, new_state_dot, velocity] = control_RSS(path, step, state_dot, state)
+                    % 0121 版 cvx_solver ECOS 已在 cvx_begin 之后, 无需外部 CVX status 重置
+                    clear K H R xInit solver_time_array
+                    % 首步诊断: 确认 MATLAB 实际加载的 control_RSS.m 版本
+                    if k == 1
+                        crss_path = which('control_RSS');
+                        fprintf('[proposed-3iter 诊断] control_RSS.m 路径: %s\n', crss_path);
+                        try
+                            fid = fopen(crss_path, 'r');
+                            if fid ~= -1
+                                line34 = '';
+                                for li = 1:34
+                                    line34 = fgetl(fid);
+                                end
+                                fclose(fid);
+                                fprintf('[proposed-3iter 诊断] control_RSS.m 第34行: %s\n', line34);
+                            end
+                        catch
+                        end
+                        try
+                            [sel_solver, avail_solvers] = cvx_solver;
+                            fprintf('[proposed-3iter 诊断] CVX 当前 solver: %s\n', sel_solver);
+                            fprintf('[proposed-3iter 诊断] CVX 可用 solvers: %s\n', strjoin(avail_solvers, ', '));
+                        catch
+                        end
+                    end
+                    [u_full, worldVelocity, bodyVelocity] = ...
+                        control_RSS(path, k, lastBodyVelocity, state');
+                    u = u_full(:, 1);
+                    solve_time = NaN;  % submodule 不输出 solve_time (用 diary 捕获, 此处不解析)
                     iter_num = NaN;    % submodule 不输出 iter_num
 
                 case 'e-lmpc'
                     % RSS_sqp: [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state)
-                    addpath(submodule_dirs('e-lmpc'));
+                    % submodule 路径已在循环外一次性 addpath
                     [worldVelocity, bodyVelocity, solve_time, iter_num] = ...
                         control_RSS(path, k, lastBodyVelocity, state');
-                    rmpath(submodule_dirs('e-lmpc'));
                     u = bodyVelocity - lastBodyVelocity;
 
                 case 'interior-point'
                     % RSS_fmincon: [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state, params)
-                    addpath(submodule_dirs('interior-point'));
+                    % submodule 路径已在循环外一次性 addpath
                     [worldVelocity, bodyVelocity, solve_time, iter_num] = ...
                         control_RSS(path, k, lastBodyVelocity, state', config);
-                    rmpath(submodule_dirs('interior-point'));
                     u = bodyVelocity - lastBodyVelocity;
 
                 case 'active-set'
@@ -195,13 +232,10 @@ function summary = run_paper_baseline_case(config, scenario)
                 fail_reason = 'worldVelocity contains NaN/Inf';
             end
 
-            % u 检查: proposed-3iter 接口不返回 u (记为 NaN), 跳过 u 的有限性检查
-            if ~strcmp(algorithm, 'proposed-3iter')
-                if any(isnan(u(:))) || any(isinf(u(:)))
-                    step_ok = false;
-                    if isempty(fail_reason)
-                        fail_reason = 'u contains NaN/Inf';
-                    end
+            if any(isnan(u(:))) || any(isinf(u(:)))
+                step_ok = false;
+                if isempty(fail_reason)
+                    fail_reason = 'u contains NaN/Inf';
                 end
             end
 
@@ -226,14 +260,10 @@ function summary = run_paper_baseline_case(config, scenario)
 
             % 推进状态
             state = propagateState(state, worldVelocity, config);
-            % RSS_proposed 的 control_RSS 期望传入 world frame 速度 (state_dot),
-            % 与其原始 main.m 一致 (main.m 第 65 行 state_dot = new_state_dot)。
-            % 其他算法 (e-lmpc/interior-point) 的 control_RSS 期望 body frame 速度。
-            if strcmp(algorithm, 'proposed-3iter')
-                lastBodyVelocity = worldVelocity;
-            else
-                lastBodyVelocity = bodyVelocity;
-            end
+            % 所有算法的 control_RSS 期望传入 body frame 速度 (state_dot):
+            %   - RSS_proposed 0121: last_vel = velocity (第3输出, body frame)
+            %   - RSS_sqp/RSS_fmincon: state_dot = bodyVelocity
+            lastBodyVelocity = bodyVelocity;
             states(:, k+1) = state;
 
         catch ME

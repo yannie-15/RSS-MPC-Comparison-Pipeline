@@ -1,4 +1,4 @@
-function comparison = paper_reproduction()
+function comparison = paper_reproduction(algorithms)
 % PAPER_REPRODUCTION  论文 Section IV 固定轨迹实验复现
 %
 % 使用论文 Section IV 的固定初始状态对四种算法进行仿真:
@@ -23,11 +23,19 @@ function comparison = paper_reproduction()
 %   - results/paper_reproduction/{算法名}_results.csv
 %   - results/paper_reproduction/paper_reproduction.mat
 %
+% 增量复现: 默认只运行指定算法, 保留未运行算法的已有结果 (从 paper_reproduction.mat 加载)。
+% 若需全量重跑, 先删除 results/paper_reproduction/paper_reproduction.mat 或传入全部算法列表。
+%
+% 用法:
+%   paper_reproduction                              % 默认: 重跑全部 4 种算法
+%   paper_reproduction({'proposed-3iter'})          % 只重跑 proposed-3iter, 保留其余
+%   paper_reproduction({'e-lmpc','active-set'})     % 只重跑指定算法, 保留其余
+%
 % 完全独立脚本: 删除本文件不影响其他功能。
 
     %% =====================================================
     % 1. 路径设置
-    % ======================================================
+    %% =====================================================
     script_dir = fileparts(mfilename('fullpath'));
     workspace_root = fileparts(script_dir);
     addpath(fullfile(workspace_root, 'matlab'));
@@ -36,12 +44,22 @@ function comparison = paper_reproduction()
     %% =====================================================
     % 2. 算法列表与场景设置
     % ======================================================
-    algorithms = {'proposed-3iter', 'e-lmpc', 'active-set', 'interior-point'};
+    all_algorithms = {'proposed-3iter', 'e-lmpc', 'active-set', 'interior-point'};
+    if nargin < 1 || isempty(algorithms)
+        algorithms = all_algorithms;
+    end
+    % 校验算法名合法性
+    for i = 1:length(algorithms)
+        if ~any(strcmp(all_algorithms, algorithms{i}))
+            error('paper_reproduction:UnknownAlgorithm', ...
+                '未知算法: %s。可选: %s', algorithms{i}, strjoin(all_algorithms, ', '));
+        end
+    end
     num_algorithms = length(algorithms);
 
     fprintf('========================================\n');
     fprintf('论文 Section IV 固定轨迹实验复现\n');
-    fprintf('算法: %s\n', strjoin(algorithms, ', '));
+    fprintf('本次运行算法: %s\n', strjoin(algorithms, ', '));
     fprintf('(每个算法使用各自 submodule 的 config.m 参数)\n');
     fprintf('========================================\n');
 
@@ -56,34 +74,74 @@ function comparison = paper_reproduction()
     scen.initialVelocity = [0.01; 0.01; 0.01];
 
     %% =====================================================
-    % 3. 输出目录
+    % 3. 输出目录 (增量模式: 不清空整个目录, 只清理本次运行算法的输出)
     % ======================================================
     results_dir = fullfile(workspace_root, 'results', 'paper_reproduction');
-    % 清空旧结果，确保图片被覆盖而非残留
-    if exist(results_dir, 'dir')
-        try
-            rmdir(results_dir, 's');
-        catch
-            warning('paper_reproduction:cleanFailed', ...
-                '无法清空旧结果目录 (文件可能被占用), 将覆盖写入。\n请关闭占用该目录的程序后重试。');
-        end
-    end
     if ~exist(results_dir, 'dir'), mkdir(results_dir); end
 
-    %% =====================================================
-    % 4. 初始化 comparison 结构体 (与 compare_algorithms 一致)
-    % ======================================================
-    comparison = struct();
-    comparison.seeds = 1;
-    comparison.algorithms = algorithms;
-    comparison.numSeeds = 1;
-    comparison.numAlgorithms = num_algorithms;
-    comparison.results = {};
-    comparison.completedPairs = cell(0, 2);
-    comparison.totalElapsed = 0;
+    % 清理本次将重跑算法的旧输出文件 (CSV + 汇总图 + 逐 seed 图目录)
+    for i = 1:num_algorithms
+        alg = algorithms{i};
+        csv_file = fullfile(results_dir, sprintf('%s_results.csv', alg));
+        if exist(csv_file, 'file'), delete(csv_file); end
+        summary_png = fullfile(results_dir, 'per_algorithm', sprintf('%s_summary.png', alg));
+        if exist(summary_png, 'file'), delete(summary_png); end
+        per_alg_dir = fullfile(results_dir, 'per_algorithm', alg);
+        if exist(per_alg_dir, 'dir')
+            try rmdir(per_alg_dir, 's'); catch, end
+        end
+    end
 
     %% =====================================================
-    % 5. 逐算法运行
+    % 4. 初始化 comparison 结构体
+    % 增量模式: 加载已有 paper_reproduction.mat, 保留未重跑算法的旧结果
+    % ======================================================
+    final_file = fullfile(results_dir, 'paper_reproduction.mat');
+    prev_comparison = [];
+    if exist(final_file, 'file')
+        try
+            loaded = load(final_file, 'comparison');
+            prev_comparison = loaded.comparison;
+            fprintf('[增量模式] 已加载旧结果: %s\n', final_file);
+        catch
+            fprintf('[增量模式] 旧 .mat 加载失败, 将全新开始。\n');
+        end
+    end
+
+    comparison = struct();
+    comparison.seeds = 1;
+    comparison.numSeeds = 1;
+    comparison.totalElapsed = 0;
+
+    if ~isempty(prev_comparison) && isfield(prev_comparison, 'results') && ~isempty(prev_comparison.results)
+        % 合并: 保留旧结果中不在本次运行列表里的算法
+        kept_results = {};
+        kept_pairs = cell(0, 2);
+        for i = 1:length(prev_comparison.results)
+            r = prev_comparison.results{i};
+            if isfield(r, 'algorithm') && ~any(strcmp(algorithms, r.algorithm))
+                kept_results{end+1} = r;
+                kept_pairs(end+1, :) = {1, r.algorithm};
+            end
+        end
+        comparison.results = kept_results;
+        comparison.completedPairs = kept_pairs;
+        if ~isempty(kept_results)
+            fprintf('[增量模式] 保留已有算法结果: %s\n', ...
+                strjoin({kept_pairs{:, 2}}, ', '));
+        end
+    else
+        comparison.results = {};
+        comparison.completedPairs = cell(0, 2);
+    end
+
+    % comparison.algorithms 始终记录全部 4 种算法 (用于 Table II 汇总打印完整)
+    all_algorithms_full = {'proposed-3iter', 'e-lmpc', 'active-set', 'interior-point'};
+    comparison.algorithms = all_algorithms_full;
+    comparison.numAlgorithms = length(all_algorithms_full);
+
+    %% =====================================================
+    % 5. 逐算法运行 (仅本次指定算法)
     % ======================================================
     total_tic = tic;
 
@@ -121,23 +179,28 @@ function comparison = paper_reproduction()
         comparison.results{end+1} = summary;
         comparison.completedPairs(end+1, :) = {1, algorithm};
 
-        % 生成图像 + CSV
-        plot_one_algorithm_paper(comparison, alg_idx, results_dir);
-        save_algorithm_csv_paper(comparison, alg_idx, results_dir);
+        % 生成图像 + CSV (按算法名在 all_algorithms_full 中的索引定位子图)
+        alg_full_idx = find(strcmp(all_algorithms_full, algorithm));
+        plot_one_algorithm_paper(comparison, alg_full_idx, results_dir);
+        save_algorithm_csv_paper(comparison, alg_full_idx, results_dir);
     end
 
     comparison.totalElapsed = toc(total_tic);
 
     %% =====================================================
-    % 6. 汇总统计
+    % 6. 汇总统计 (覆盖全部 4 种算法, 含保留的旧结果)
     % ======================================================
     fprintf('\n========================================\n');
-    for alg_idx = 1:num_algorithms
-        algorithm = algorithms{alg_idx};
+    for alg_idx = 1:length(all_algorithms_full)
+        algorithm = all_algorithms_full{alg_idx};
         alg_results = get_alg_results_paper(comparison, alg_idx);
-        n_success = sum([alg_results.success]);
-        fprintf('[算法 %s] 成功: %d/1, 失败: %d/1\n', ...
-            algorithm, n_success, 1 - n_success);
+        if isempty(alg_results)
+            fprintf('[算法 %s] 无结果\n', algorithm);
+        else
+            n_success = sum([alg_results.success]);
+            fprintf('[算法 %s] 成功: %d/1, 失败: %d/1\n', ...
+                algorithm, n_success, 1 - n_success);
+        end
     end
 
     %% =====================================================
@@ -271,6 +334,10 @@ function plot_one_algorithm_paper(comparison, alg_idx, results_dir)
         legend('FontSize', 6, 'FontName', fn);
         grid on;
         set(gca, 'FontName', fn, 'FontSize', fs);
+        % interior-point: 数据范围较小, 强制对齐原论文纵坐标范围 -20~20
+        if strcmp(algorithm, 'interior-point')
+            ylim([-20, 20]);
+        end
         hold off;
 
         % 子图3: 各轮输出速度

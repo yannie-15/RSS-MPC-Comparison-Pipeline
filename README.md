@@ -53,7 +53,7 @@ RSS_V2/
 │   │
 │   │ ── git submodule (引用外部仓库, 不复制代码) ────────
 │   ├── RSS_proposed/              # → github.com/serendipitjx/RSS_proposed
-│   │   └── control_RSS.m          #   proposed (CVX+ECOS, 3 次迭代)
+│   │   └── control_RSS.m          #   proposed (CVX+SDPT3, 3 次迭代)
 │   ├── RSS_sqp/                   # → github.com/serendipitjx/RSS_sqp
 │   │   └── control_RSS.m          #   e-LMPC (fmincon SQP, MaxIter=1)
 │   ├── RSS_fmincon/               # → github.com/serendipitjx/RSS_fmincon
@@ -80,7 +80,7 @@ RSS_V2/
 | interior-point | `algorithms/RSS_fmincon/` (submodule) | `[new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state, params)` |
 | active-set | `algorithms/control_active_set.m` (本地) | `[u, worldVelocity, bodyVelocity] = control_active_set(path, k, state_dot, state, config)` |
 
-`run_one_case.m` 按算法名动态切换 submodule 路径（`addpath`/`rmpath`），避免三个 `control_RSS.m` 和 `config.m` 同名冲突。
+`run_one_case.m` 按算法名动态切换 submodule 路径（`addpath`/`rmpath`），避免三个 `control_RSS.m` 和 `config.m` 同名冲突。`run_paper_baseline_case.m`（论文复现专用）改为在循环外一次性 `addpath` 当前算法的 submodule 并用 `onCleanup` 注册 `rmpath`，循环内不再切换路径，从根本上避免多版本 `control_RSS` 函数缓存冲突（此前 `clear functions` 不足以解决 e-lmpc/interior-point 的"输入/输出参数太多"错误）。
 
 ### 获取项目（含 submodule）
 
@@ -112,7 +112,9 @@ Step 7  打印 Table II         → print_table_ii()
 
 ### 环境要求
 
-- MATLAB（需 Optimization Toolbox 提供 fmincon；需 CVX + ECOS 用于 proposed 算法）
+- MATLAB（需 Optimization Toolbox 提供 fmincon；需 CVX + SDPT3 用于 proposed 算法）
+
+> **注（ECOS → SDPT3 切换）**：原 RSS_proposed submodule 0121 分支 `control_RSS.m` 内部使用 `cvx_solver ECOS`，但 ECOS 2.0.10 在 MATLAB R2026a 上对此 problem 触发 segfault（访问冲突，MATLAB 整体崩溃）。已临时将 submodule 的 `control_RSS.m` 第34行改为 `cvx_solver SDPT3`，并在 [run_paper_baseline_case.m](matlab/run_paper_baseline_case.m) 中针对 proposed-3iter 算法添加全局 `cvx_solver sdpt3` 兜底 + 首步诊断输出（打印 control_RSS.m 实际路径、第34行内容、CVX 可用 solver 列表），便于定位缓存/遮蔽问题。ECOS 长期方案待定（重新编译 ECOS 或降级 MATLAB）。
 - git（用于 submodule 管理）
 
 ### 运行批量对比
@@ -146,8 +148,18 @@ main('seeds', 1:50, 'algorithms', {'proposed-3iter'}, 'forceRegen', true)
 
 ```matlab
 cd('d:\PROJECT\RSS_V2\matlab'); setup_paths;
-paper_reproduction
+
+paper_reproduction                                  % 默认: 重跑全部 4 种算法
+paper_reproduction({'proposed-3iter'})              % 只重跑 proposed-3iter, 保留其余算法已有结果
+paper_reproduction({'e-lmpc','active-set'})         % 只重跑指定算法, 保留其余
 ```
+
+**增量复现模式**：默认不清空整个 `results/paper_reproduction/` 目录，而是：
+- 加载已有的 `paper_reproduction.mat`，保留未重跑算法的旧结果
+- 仅清理本次将重跑算法对应的 CSV / 汇总图 / 逐 seed 图目录
+- 最终合并保存（Table II 汇总覆盖全部 4 种算法）
+
+若需全量重跑，先删除 `results/paper_reproduction/paper_reproduction.mat` 或传入全部算法列表。
 
 **参数来源**（每个算法用各自的 config.m，不在 paper_reproduction 中覆盖）：
 
@@ -158,26 +170,28 @@ paper_reproduction
 | interior-point | `algorithms/RSS_fmincon/config.m` |
 | active-set | `matlab/defaultConfig.m`（本地，对齐 RSS_fmincon） |
 
-**固定初始状态**（论文无随机性）：
+**固定初始状态**（论文无随机性，所有算法统一）：
 
-| 参数 | 值 |
-|---|---|
-| 初始位姿 | `[0.05, 0.1, 0.2]` |
-| 初始速度 | `[0.01, 0.01, 0.01]` |
+| 参数 | 值 | 适用算法 |
+|---|---|---|
+| 初始位姿 | `[0.05, 0.1, 0.2]` | 全部 4 种算法 |
+| 初始速度 | `[0.01, 0.01, 0.01]` | 全部 4 种算法 |
 
-**各 submodule config.m 参数对比**：
+> 注：RSS_proposed submodule 已切换到 `0121` 分支（commit d25d299 "proposed method 最终版"），其 `main.m` 初始条件为 `[0.05,0.1,0.2]+[0.01,0.01,0.01]`，与其余三种算法完全一致，无需特判。
 
-| 参数 | RSS_proposed | RSS_sqp | RSS_fmincon |
+**各 submodule config.m 参数对比**（submodule 保持原始参数，不修改）：
+
+| 参数 | RSS_proposed (0121) | RSS_sqp | RSS_fmincon |
 |---|---|---|---|
-| Lx | 655 (mm) | 0.655 (m) | 0.655 (m) |
-| vimax | 1000 | 5 | 5 |
-| phidotmax | 0.5π | 5π | 5π |
-| t_end | 0.6 s | 1.0 s | 1.0 s |
-| num_steps | 60 | 100 | 100 |
-| ctrl_pts | 4 个点 | 5 个点 | 5 个点 |
-| K (预测时域) | 5 | 6 | 6 |
+| Lx | 0.655 (m) | 0.655 (m) | 0.655 (m) |
+| vimax | 5 (m/s) | 5 (m/s) | 5 (m/s) |
+| phidotmax | 5π | 5π | 5π |
+| t_end | 1.0 s | 1.0 s | 1.0 s |
+| num_steps | 100 | 100 | 100 |
+| ctrl_pts | 5 个点 | 5 个点 | 5 个点 |
+| K (预测时域) | 6 | 6 | 6 |
 
-> 注：RSS_proposed 的 config.m 参数与其他三个差异较大（mm 单位、不同轨迹），各算法在各自参数下独立运行。
+> 注：三个 submodule 的 config.m 参数已天然一致（均为 m 单位）。RSS_proposed 的 `0121` 分支为最终版，与 RSS_sqp/RSS_fmincon 使用相同的几何/仿真参数。仅控制器增益 k1 在各算法 control_RSS.m 内部各自设定。
 
 **与 main.m 的区别**：
 - `main.m` 用 `scenario_bank(seed)` 生成随机场景，所有算法共用同一套参数（defaultConfig）
@@ -198,7 +212,7 @@ paper_reproduction
 
 | 算法 | 求解器 | 来源 | 特点 |
 |---|---|---|---|
-| proposed-3iter | CVX + ECOS | RSS_proposed submodule | RSS 凸化 + 3 次迭代，K=5 |
+| proposed-3iter | CVX + SDPT3 | RSS_proposed submodule | RSS 凸化 + 3 次迭代，K=6 |
 | e-lmpc | fmincon SQP | RSS_sqp submodule | MaxIter=1，K=6 |
 | interior-point | fmincon interior-point | RSS_fmincon submodule | K=6，可违反转向锥约束 |
 | active-set | fmincon active-set | 本地 `algorithms/` | K=6，对齐 RSS_fmincon |
