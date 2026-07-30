@@ -53,7 +53,8 @@ RSS_V2/
 │   │
 │   │ ── git submodule (引用外部仓库, 不复制代码) ────────
 │   ├── RSS_proposed/              # → github.com/serendipitjx/RSS_proposed
-│   │   └── control_RSS.m          #   proposed (CVX+SDPT3, 3 次迭代)
+│   │   ├── control_RSS.m          #   proposed (CVX+SDPT3, 3 次迭代)
+│   │   └── verify_constraints_RSS.m  # 约束验证脚本 (SQP每次子迭代原始约束重检)
 │   ├── RSS_sqp/                   # → github.com/serendipitjx/RSS_sqp
 │   │   └── control_RSS.m          #   e-LMPC (fmincon SQP, MaxIter=1)
 │   ├── RSS_fmincon/               # → github.com/serendipitjx/RSS_fmincon
@@ -114,7 +115,7 @@ Step 7  打印 Table II         → print_table_ii()
 
 - MATLAB（需 Optimization Toolbox 提供 fmincon；需 CVX + SDPT3 用于 proposed 算法）
 
-> **注（ECOS → SDPT3 切换）**：原 RSS_proposed submodule 0121 分支 `control_RSS.m` 内部使用 `cvx_solver ECOS`，但 ECOS 2.0.10 在 MATLAB R2026a 上对此 problem 触发 segfault（访问冲突，MATLAB 整体崩溃）。已临时将 submodule 的 `control_RSS.m` 第34行改为 `cvx_solver SDPT3`，并在 [run_paper_baseline_case.m](matlab/run_paper_baseline_case.m) 中针对 proposed-3iter 算法添加全局 `cvx_solver sdpt3` 兜底 + 首步诊断输出（打印 control_RSS.m 实际路径、第34行内容、CVX 可用 solver 列表），便于定位缓存/遮蔽问题。ECOS 长期方案待定（重新编译 ECOS 或降级 MATLAB）。
+> **注（ECOS → SDPT3 切换）**：原 RSS_proposed submodule 0121 分支 `control_RSS.m` 内部使用 `cvx_solver ECOS`，但 ECOS 2.0.10 在 MATLAB R2026a 上对此 problem 触发 segfault（访问冲突，MATLAB 整体崩溃）。已将 submodule 的 `control_RSS.m` 第34行改为 `cvx_solver SDPT3`，并在 [run_paper_baseline_case.m](matlab/run_paper_baseline_case.m) 中针对 proposed-3iter 算法添加全局 `cvx_solver sdpt3` 兜底 + 首步诊断输出（打印 control_RSS.m 实际路径、第34行内容、CVX 可用 solver 列表），便于定位缓存/遮蔽问题。同时修复了日志解析中 `runtime_line` 为空时直接索引 `{1}` 导致报错的问题（改为先判空再输出）。ECOS 长期方案待定（重新编译 ECOS 或降级 MATLAB）。
 - git（用于 submodule 管理）
 
 ### 运行批量对比
@@ -207,6 +208,52 @@ paper_reproduction({'e-lmpc','active-set'})         % 只重跑指定算法, 保
 - 每步 `iter_num`（求解器迭代数，proposed/active-set 为 NaN）
 - 解的有限性检查（NaN/Inf 标记失败步）
 - warm-up 排除后的中位数/分位数耗时（P1-4 复现要求）
+
+## 约束验证（verify_constraints_RSS）
+
+[verify_constraints_RSS.m](algorithms/RSS_proposed/verify_constraints_RSS.m) 用于验证 RSS proposed 算法在 SQP 求解过程中是否满足**原始问题约束**（不仅仅是最终输出轨迹）。
+
+### 背景
+
+RSS proposed 算法包含两类约束：
+
+| 约束 | 类型 | CVX 中的处理 | 是否可能违反 |
+|------|------|-------------|-------------|
+| 轮速 `‖H·ν‖ ≤ vimax` | **凸**（SOC） | CVX 直接强制 | 求解成功 → 不可能违反 |
+| 转向角速率 `|Δθ| ≤ dt·phidotmax` | **非凸** | SQP 线性化近似 | **可能违反**（线性化仅局部近似） |
+
+现有的 `computeMetrics.m` 只检查最终执行轨迹（3 次 SQP 迭代后的输出），不检查每次子迭代（m=1,2,3）的中间解。本脚本填补这一盲区。
+
+### 用法
+
+```matlab
+cd('D:\PROJECT\RSS_V2\algorithms\RSS_proposed')
+verify_constraints_RSS
+```
+
+### 验证逻辑
+
+1. 复现 `control_RSS.m` 的完整 CVX 问题（`quiet` 模式，与原代码一致）
+2. 每次 CVX 求解后（100 步 × 3 次 = 300 次），立即用**原始非线性公式**重检：
+   - 轮速：`norm(H{n} * nu(:,k))` vs `vimax`
+   - 转角变化：`atan2(wv_k) - atan2(wv_{k-1})` vs `delta_theta = dt * phidotmax`
+3. 按 SQP 迭代次数分组统计（iter1/iter2/iter3），观察收敛过程中违反是否减少
+4. 输出汇总报告 + 保存 `constraint_verification_results.mat`
+
+### 输出
+
+- 命令窗口打印每次违反的详细信息（步号、迭代号、轮编号、超出量）
+- 汇总报告：求解器失败率、轮速违反次数/最大超出量、转角违反次数/最大超出量
+- 按 SQP 子迭代的分组分析
+- `constraint_verification_results.mat`：完整验证数据
+
+## 仿真步数说明
+
+论文复现（`paper_reproduction.m`）固定 `t_end=1s, dt=0.01s` → `num_steps=100`，且 `num_path_pts = num_steps`（路径离散点数与仿真步数一一对应，第 k 步跟踪路径第 k 个点）。四种算法面对完全相同的 100 个参考点和 100 步控制，确保结果可比性。
+
+随机场景生成器 `scenario_generator.m` 的 `t_end ∈ [0.5, 2.0]` 随机，步数随之变为 50~200，用于压力测试算法在不同路径长度下的鲁棒性。
+
+> 注：`num_path_pts = num_steps` 将路径离散化精度与仿真时长绑定。在论文复现场景下无影响，但若未来需独立调整路径精度或仿真时长，应解耦这两个参数。
 
 ## 算法说明
 
