@@ -119,21 +119,23 @@ git clone --recursive <repo-url>
 git submodule update --init --recursive
 ```
 
-## 主入口流程
+## 命令速查
 
-[main.m](matlab/main.m) 按下列步骤顺序编排：
+三种入口，按使用场景选择：
 
-```
-Step 0  路径设置             → setup_paths()  (含 submodule 检查)
-Step 1  生成 seed 列表        → (参数解析)
-Step 2  选择算法              → (参数解析)
-Step 3  检查断点续跑          → comparison_load()
-Step 4  运行批量仿真          → run_batch_simulation()
-                                └─ run_one_case()  按算法名分发到 algorithms/ 下
-Step 5  保存最终结果          → save_all_artifacts()
-Step 6  生成论文对比图        → plot_paper_comparison()
-Step 7  打印 Table II         → print_table_ii()
-```
+| 场景 | 入口 | 命令 |
+|------|------|------|
+| **单次 proposed 仿真（推荐）** | Python | `python main.py --config default_python_config.json` |
+| **单次 proposed 仿真（MATLAB）** | 根目录 `main.m` | `cd D:\PROJECT\RSS_V2; main` |
+| **JSON 接口（MATLAB）** | `run_one_case.m` | `summary_json = run_one_case('default_python_config.json')` |
+| **4 算法批量对比** | `matlab/main.m` | `cd matlab; setup_paths; main` |
+| **论文 Section IV 复现** | `paper_reproduction.m` | `cd matlab; setup_paths; paper_reproduction` |
+| **约束验证** | `verify_constraints_RSS.m` | `cd matlab; setup_paths; verify_constraints_RSS` |
+| **Python smoke test** | `tests/python/` | `python tests/python/test_smoke.py` |
+| **MATLAB smoke test** | `tests/matlab/` | `cd D:\PROJECT\RSS_V2; test_run_one_case` |
+| **新旧结果回归** | `tests/matlab/` | 先 `freeze_baseline`，再 `test_parity` |
+
+> **注意**：根目录 `main.m` 和 `matlab/main.m` 是两个不同的入口。根目录 `main.m` 调用 `run_closed_loop` 跑单次 proposed-3iter 仿真；`matlab/main.m` 是 4 算法批量对比编排器。
 
 ## 快速开始
 
@@ -159,15 +161,34 @@ python -c "import matlab.engine; print('OK')"
 #### 运行
 
 ```bash
-# 使用默认配置
+# 使用默认配置 (100步, SDPT3, 无实时绘图)
 python main.py --config default_python_config.json
 
-# 自定义参数
+# 自定义 seed 和输出目录
 python main.py --seed 3 --output results/seed_0003 --no-plot
 
 # 指定 case ID
 python main.py --case-id test_001 --output results/test_001
+
+# 开启实时绘图
+python main.py --live-plot
+
+# 查看所有参数
+python main.py --help
 ```
+
+#### CLI 参数
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--config` | JSON 配置文件路径 | `default_python_config.json` |
+| `--case-id` | 案例标识符 | `paper_fixed_001` |
+| `--seed` | 随机种子 | `1` |
+| `--output` | 输出目录 | `results/<case_id>` |
+| `--live-plot` | 开启 MATLAB 实时绘图 | 关闭 |
+| `--no-plot` | 关闭绘图（默认） | — |
+| `--save-figures` | 保存图片到输出目录 | 关闭 |
+| `--force` | 覆盖已有输出目录 | 关闭 |
 
 #### 退出码
 
@@ -176,6 +197,34 @@ python main.py --case-id test_001 --output results/test_001
 | 0 | 成功（算法完成所有步） |
 | 2 | 算法失败（求解器失败、约束违反等） |
 | 3 | 基础设施错误（MATLAB Engine 未安装、配置错误等） |
+
+#### `default_python_config.json` 字段
+
+```json
+{
+  "case_id": "paper_fixed_001",
+  "seed": 1,
+  "trajectory_mode": "paper_fixed",
+  "solver": "sdpt3",
+  "num_steps": 100,
+  "live_plot": false,
+  "save_figures": false,
+  "save_full_log": false,
+  "output_dir": "results/paper_fixed_001"
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `case_id` | string | 案例标识符，用于输出目录命名 |
+| `seed` | int | 随机种子（未来随机场景用，当前固定轨迹不依赖） |
+| `trajectory_mode` | string | 轨迹模式（`paper_fixed` = 论文固定贝塞尔轨迹） |
+| `solver` | string | CVX 求解器（`sdpt3` 或 `ecos`，当前推荐 `sdpt3`） |
+| `num_steps` | int | 仿真步数（默认 100，会同步 `num_path_pts`） |
+| `live_plot` | bool | 是否开启 MATLAB 实时绘图 |
+| `save_figures` | bool | 是否保存图片到输出目录 |
+| `save_full_log` | bool | 是否保存完整日志 |
+| `output_dir` | string | 输出目录路径 |
 
 #### 输出
 
@@ -192,48 +241,75 @@ python tests/python/test_smoke.py
 
 不需要 MATLAB Engine，仅测试 Python 模块导入和 JSON 解析。
 
-### 方式二：MATLAB 入口
+### 方式二：MATLAB 入口（单次 proposed 仿真）
 
-#### 新函数化入口（推荐）
+#### 兼容入口 `main.m`（根目录）
 
 ```matlab
-% 兼容入口 (开实时绘图)
 cd D:\PROJECT\RSS_V2
-main
+main                    % 调用 run_closed_loop, 开实时绘图
+```
 
-% 直接调用 run_closed_loop
-cfg = config();
-cfg.live_plot = false;
+#### 直接调用 `run_closed_loop`
+
+```matlab
+cd D:\PROJECT\RSS_V2
+cfg = config();         % 从 algorithms/RSS_proposed/config.m 加载默认参数
+cfg.live_plot = false;  % 关闭实时绘图 (批量运行推荐)
 result = run_closed_loop(cfg);
 
-% JSON 接口 (与 Python 桥接)
-summary_json = run_one_case('default_python_config.json');
-summary = jsondecode(summary_json);
+% result 包含完整仿真数据:
+%   result.state_history         - Nx3 状态 [x, y, psi]
+%   result.body_velocity_history - Nx3 车体系速度
+%   result.control_history       - Nx3 控制增量
+%   result.wheel_speed_history   - Nx4 轮速
+%   result.wheel_angle_history   - Nx4 轮角
+%   result.steering_rate_history - Nx4 转向率
+%   result.solver_time_history   - Nx1 每步求解时间
+%   result.cvx_status_history    - {Nx1} CVX 状态
+%   result.trajectory_cost       - 总代价 J
+%   result.position_rmse         - 位置 RMSE
+%   result.completed_steps       - 完成步数
+%   result.success               - 是否成功
 ```
 
-#### MATLAB smoke test
+#### JSON 接口 `run_one_case`（与 Python 桥接）
 
 ```matlab
 cd D:\PROJECT\RSS_V2
-test_run_one_case    % 测试 run_closed_loop + run_one_case + control_RSS diagnostics
-
-% 新旧结果回归对比 (需先运行 freeze_baseline)
-cd tests/baseline
-freeze_baseline      % 冻结原 main.m 基线 (约 20 分钟)
-cd D:\PROJECT\RSS_V2
-test_parity          % 对比新旧结果
+summary_json = run_one_case('default_python_config.json');
+summary = jsondecode(summary_json);
+disp(summary.success);
+disp(summary.position_rmse);
 ```
 
-#### 原批量对比入口
+> `run_one_case` 会自动创建 `output_dir`，保存 `result.mat` 和 `summary.json`。
 
-### 环境要求
+#### MATLAB 测试
+
+```matlab
+cd D:\PROJECT\RSS_V2
+test_run_one_case    % smoke test: run_closed_loop + run_one_case + diagnostics
+
+% 新旧结果回归对比 (需先冻结基线)
+cd tests/baseline
+freeze_baseline      % 冻结原 main.m 基线 (约 20 分钟, 300 次 SDPT3)
+cd D:\PROJECT\RSS_V2
+test_parity          % 12 项检查: state/velocity/control/cost/RMSE/约束
+```
+
+### 方式三：4 算法批量对比（`matlab/main.m`）
+
+批量对比 proposed-3iter / e-lmpc / interior-point / active-set 四种算法，支持多 seed。
+
+#### 环境要求
 
 - MATLAB（需 Optimization Toolbox 提供 fmincon；需 CVX + SDPT3 用于 proposed 算法）
-
-> **注（ECOS → SDPT3 切换）**：原 RSS_proposed submodule 0121 分支 `control_RSS.m` 内部使用 `cvx_solver ECOS`，但 ECOS 2.0.10 在 MATLAB R2026a 上对此 problem 触发 segfault（访问冲突，MATLAB 整体崩溃）。已将 submodule 的 `control_RSS.m` 第34行改为 `cvx_solver SDPT3`，并在 [run_paper_baseline_case.m](matlab/run_paper_baseline_case.m) 中针对 proposed-3iter 算法添加全局 `cvx_solver sdpt3` 兜底 + 首步诊断输出（打印 control_RSS.m 实际路径、第34行内容、CVX 可用 solver 列表），便于定位缓存/遮蔽问题。同时修复了日志解析中 `runtime_line` 为空时直接索引 `{1}` 导致报错的问题（改为先判空再输出）。ECOS 长期方案待定（重新编译 ECOS 或降级 MATLAB）。
 - git（用于 submodule 管理）
 
-### 运行批量对比
+> **注（ECOS → SDPT3 切换）**：原 RSS_proposed submodule 0121 分支 `control_RSS.m` 内部使用 `cvx_solver ECOS`，但 ECOS 2.0.10 在 MATLAB R2026a 上对此 problem 触发 segfault（访问冲突，MATLAB 整体崩溃）。已将 submodule 的 `control_RSS.m` 第34行改为 `cvx_solver SDPT3`，并在 [run_paper_baseline_case.m](matlab/run_paper_baseline_case.m) 中针对 proposed-3iter 算法添加全局 `cvx_solver sdpt3` 兜底 + 首步诊断输出（打印 control_RSS.m 实际路径、第34行内容、CVX 可用 solver 列表），便于定位缓存/遮蔽问题。同时修复了日志解析中 `runtime_line` 为空时直接索引 `{1}` 导致报错的问题（改为先判空再输出）。ECOS 长期方案待定（重新编译 ECOS 或降级 MATLAB）。
+
+#### 运行批量对比
 
 ```matlab
 cd('d:\PROJECT\RSS_V2\matlab'); setup_paths;
@@ -251,14 +327,30 @@ main('algorithms', {'proposed-3iter'})
 main('seeds', 1:50, 'algorithms', {'proposed-3iter'}, 'forceRegen', true)
 ```
 
-### 已知限制
+#### 批量对比编排流程
+
+`matlab/main.m` 按下列步骤顺序编排：
+
+```
+Step 0  路径设置             → setup_paths()  (含 submodule 检查)
+Step 1  生成 seed 列表        → (参数解析)
+Step 2  选择算法              → (参数解析)
+Step 3  检查断点续跑          → comparison_load()
+Step 4  运行批量仿真          → run_batch_simulation()
+                                └─ run_one_case()  按算法名分发到 algorithms/ 下
+Step 5  保存最终结果          → save_all_artifacts()
+Step 6  生成论文对比图        → plot_paper_comparison()
+Step 7  打印 Table II         → print_table_ii()
+```
+
+## 已知限制
 
 - **proposed 算法**（RSS_proposed submodule）只输出 `new_state_dot`，缺少 `u` 和 `solve_time`，相关 metrics 记为 NaN，Table II 中求解时间列显示 N/A
 - 三个 submodule 的 `control_RSS.m` 接口各不相同，`run_one_case.m` 负责适配
 - submodule 内部调用各自的 `config.m`（无参函数），与项目的 `defaultConfig.m` 独立
 - **main 批量仿真时**，`run_one_case.m` 通过 `setup_config_override` 用临时目录的 `config.m` 覆盖 submodule 的 `config.m`，使 proposed/e-lmpc 能用到 main 传入的随机 seed 场景参数（ctrl_pts/vimax/phidotmax/Lx/Ly 等）；interior-point/active-set 直接接收外部 config
 
-### 论文结果复现
+## 论文结果复现
 
 运行 [paper_reproduction.m](matlab/paper_reproduction.m) 可复现论文 Section IV 的固定轨迹实验。无需 seed，每个算法使用各自 submodule 的 config.m 参数：
 
