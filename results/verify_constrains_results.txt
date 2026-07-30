@@ -1,0 +1,50 @@
+
+========== 约束验证汇总 ==========
+
+1. 求解器状态:
+   总求解次数: 300
+   失败次数: 0 (0.0%)
+
+2. 轮速约束 (凸, CVX直接强制):
+   约束: ||H_n * nu_k|| <= vimax = 5.00
+   全局最大轮速: 5.000000
+   最大违反量: 0.000000e+00
+   违反次数: 0 / 300 (0.00%)
+
+3. 转向角速率约束 (非凸, SQP线性化近似):
+   约束: |d_angle| <= delta_theta = 0.157080 rad (= dt*phidotmax = 0.010*15.7080)
+   全局最大转角变化: 0.157058 rad (99.99% of limit)
+   最大违反量: 0.000000e+00 rad
+   违反次数: 0 / 300 (0.00%)
+
+4. 按SQP子迭代分析 (转角约束):
+   Iter 1: 违反 0/100 步, 最大超出 0.000000e+00 rad, 最大转角变化 0.146347 rad (93.2% of limit)
+   Iter 2: 违反 0/100 步, 最大超出 0.000000e+00 rad, 最大转角变化 0.157014 rad (100.0% of limit)
+   Iter 3: 违反 0/100 步, 最大超出 0.000000e+00 rad, 最大转角变化 0.157058 rad (100.0% of limit)
+
+========== 结论 ==========
+✓ 所有 300 次CVX求解 (100步 x 3次SQP迭代) 均满足原始约束。
+  轮速约束: 无违反 (凸约束, CVX直接强制)
+  转角约束: 无违反 (SQP线性化后的解也满足原始非凸约束)
+
+结果已保存到 constraint_verification_results.mat
+
+ans = 
+
+  包含以下字段的 struct:
+
+           speed_max: [100×3 double]
+          speed_viol: [100×3 double]
+           angle_max: [100×3 double]
+          angle_viol: [100×3 double]
+          cvx_status: {100×3 cell}
+          cvx_optval: [100×3 double]
+       solver_failed: [100×3 logical]
+              params: [1×1 struct]
+           num_steps: 100
+            max_iter: 3
+               vimax: 5
+         delta_theta: 0.1571
+        total_solves: 300
+    speed_viol_count: 0
+    angle_viol_count: 0
