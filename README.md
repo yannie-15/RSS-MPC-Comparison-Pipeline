@@ -6,10 +6,32 @@
 
 ```
 RSS_V2/
-├── matlab/                        # 仿真框架（主入口）
+├── main.py                        # Python 入口 (推荐), 通过 MATLAB Engine 调用
+├── main.m                         # MATLAB 兼容入口 (调用 run_closed_loop)
+├── run_one_case.m                 # JSON 接口: 读取 config.json → run_closed_loop → 返回 summary JSON
+├── run_closed_loop.m              # 从原 main.m 抽取的 100 步闭环函数, 返回结构化 result
+├── default_python_config.json     # Python 默认配置
+│
+├── python/                        # Python 桥接层
+│   ├── __init__.py
+│   ├── matlab_bridge.py           # MATLAB Engine 启动/调用/关闭
+│   ├── config_io.py               # JSON 配置加载/合并/保存
+│   └── result_io.py               # summary JSON 解析/打印
+│
+├── tests/                         # 测试
+│   ├── baseline/
+│   │   ├── freeze_baseline.m      # Phase 0: 冻结原 main.m 基线
+│   │   └── .gitkeep
+│   ├── matlab/
+│   │   ├── test_run_one_case.m    # MATLAB smoke test
+│   │   └── test_parity.m          # 新旧结果回归对比
+│   └── python/
+│       └── test_smoke.py          # Python smoke test (不需 MATLAB Engine)
+│
+├── matlab/                        # 批量对比仿真框架
 │   │
 │   │ ── 主入口与编排 ──────────────────────────────────────
-│   ├── main.m                     # 主入口, 按步骤编排 (Step 0-7)
+│   ├── main.m                     # 批量仿真主入口, 按步骤编排 (Step 0-7)
 │   ├── paper_reproduction.m       # 论文 Section IV 复现独立脚本
 │   │
 │   │ ── 状态管理 ────────────────────────────────────────
@@ -76,10 +98,14 @@ RSS_V2/
 
 | 算法 | 来源 | 接口 |
 |---|---|---|
-| proposed-3iter | `algorithms/RSS_proposed/` (submodule) | `[new_state_dot] = control_RSS(path, k, state_dot, state)` |
+| proposed-3iter | `algorithms/RSS_proposed/` (submodule) | `[u, new_state_dot, velocity, diagnostics] = control_RSS(path, k, state_dot, state)` |
 | e-lmpc | `algorithms/RSS_sqp/` (submodule) | `[new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state)` |
 | interior-point | `algorithms/RSS_fmincon/` (submodule) | `[new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state, params)` |
 | active-set | `algorithms/control_active_set.m` (本地) | `[u, worldVelocity, bodyVelocity] = control_active_set(path, k, state_dot, state, config)` |
+
+> **Phase 3 修复**：`control_RSS.m`（RSS_proposed）新增第 4 输出 `diagnostics`（可选，旧调用不受影响）。求解失败时不再无条件执行 `u_hat = u`，改为跟踪 `u_last_feasible` 并在失败时回退到最后可行解。求解失败后停止当前步后续 SQP 迭代。
+>
+> **Phase 6 修复**：日志解析支持 SDPT3 格式（`Total CPU time (secs) = x.xx`），解析失败记为 `NaN`（不再记为 `0`）。移除了 `pause(0.01)` 延迟。
 
 `run_one_case.m` 按算法名动态切换 submodule 路径（`addpath`/`rmpath`），避免三个 `control_RSS.m` 和 `config.m` 同名冲突。`run_paper_baseline_case.m`（论文复现专用）改为在循环外一次性 `addpath` 当前算法的 submodule 并用 `onCleanup` 注册 `rmpath`，循环内不再切换路径，从根本上避免多版本 `control_RSS` 函数缓存冲突（此前 `clear functions` 不足以解决 e-lmpc/interior-point 的"输入/输出参数太多"错误）。
 
@@ -110,6 +136,95 @@ Step 7  打印 Table II         → print_table_ii()
 ```
 
 ## 快速开始
+
+### 方式一：Python 入口（推荐）
+
+通过 `main.py` 调用 MATLAB Engine，一次性运行完整 100 步闭环仿真。Python 负责配置和结果汇总，MATLAB 负责全部 RSS 数学、CVX+SDPT3 求解和闭环仿真。
+
+#### 安装 MATLAB Engine for Python
+
+```bash
+# 1. 在 MATLAB 中获取 matlabroot
+#    >> matlabroot
+# 2. 安装 MATLAB Engine
+cd <matlabroot>/extern/engines/python
+python setup.py install
+
+# 3. 验证安装
+python -c "import matlab.engine; print('OK')"
+```
+
+> MATLAB R2026a 支持 Python 3.9-3.12（以本机 `matlabroot/extern/engines/python/setup.py` 为准）。
+
+#### 运行
+
+```bash
+# 使用默认配置
+python main.py --config default_python_config.json
+
+# 自定义参数
+python main.py --seed 3 --output results/seed_0003 --no-plot
+
+# 指定 case ID
+python main.py --case-id test_001 --output results/test_001
+```
+
+#### 退出码
+
+| 退出码 | 含义 |
+|--------|------|
+| 0 | 成功（算法完成所有步） |
+| 2 | 算法失败（求解器失败、约束违反等） |
+| 3 | 基础设施错误（MATLAB Engine 未安装、配置错误等） |
+
+#### 输出
+
+每次运行在 `output_dir` 中生成：
+- `resolved_config.json` — 合并后的完整配置
+- `result.mat` — 完整仿真数据（状态、速度、控制、轮速、轮角、求解时间等）
+- `summary.json` — 仿真摘要（成功/失败、RMSE、代价、约束违反等）
+
+#### Python smoke test
+
+```bash
+python tests/python/test_smoke.py
+```
+
+不需要 MATLAB Engine，仅测试 Python 模块导入和 JSON 解析。
+
+### 方式二：MATLAB 入口
+
+#### 新函数化入口（推荐）
+
+```matlab
+% 兼容入口 (开实时绘图)
+cd D:\PROJECT\RSS_V2
+main
+
+% 直接调用 run_closed_loop
+cfg = config();
+cfg.live_plot = false;
+result = run_closed_loop(cfg);
+
+% JSON 接口 (与 Python 桥接)
+summary_json = run_one_case('default_python_config.json');
+summary = jsondecode(summary_json);
+```
+
+#### MATLAB smoke test
+
+```matlab
+cd D:\PROJECT\RSS_V2
+test_run_one_case    % 测试 run_closed_loop + run_one_case + control_RSS diagnostics
+
+% 新旧结果回归对比 (需先运行 freeze_baseline)
+cd tests/baseline
+freeze_baseline      % 冻结原 main.m 基线 (约 20 分钟)
+cd D:\PROJECT\RSS_V2
+test_parity          % 对比新旧结果
+```
+
+#### 原批量对比入口
 
 ### 环境要求
 
@@ -269,19 +384,59 @@ verify_constraints_RSS
 
 | 模块 | 职责 |
 |---|---|
-| `main.m` | 主入口，按 Step 0-7 编排全流程 |
-| `run_one_case.m` | 单次闭环仿真，按算法名分发到 submodule 或本地 |
-| `comparison_init/load/save.m` | comparison 结构体的初始化 / 加载 / 增量保存 |
-| `run_batch_simulation.m` | 核心 (seed × alg) 双层循环 |
-| `setup_paths.m` | 路径设置 + submodule 初始化检查 |
-| `pair_is_completed.m` | 判断 (seed, alg) 是否已成功 |
-| `get_alg_results.m` | 按算法名提取所有 results |
-| `plot_one_algorithm.m` | 单算法 summary 图 |
-| `print_table_ii.m` | Table II 风格汇总表打印 |
+| `main.py` | **Python 入口（推荐）**，CLI 参数解析 → MATLAB Engine → run_one_case |
+| `run_closed_loop.m` | **根目录**，从原 main.m 抽取的 100 步闭环函数，返回结构化 result |
+| `run_one_case.m` (根目录) | **JSON 接口**，读取 config.json → run_closed_loop → 返回 summary JSON |
+| `main.m` (根目录) | MATLAB 兼容入口，调用 run_closed_loop |
+| `python/matlab_bridge.py` | MATLAB Engine 启动/路径设置/调用 run_one_case/关闭 |
+| `python/config_io.py` | JSON 配置加载/合并/CLI 覆盖/保存 |
+| `python/result_io.py` | summary JSON 解析/打印 |
+| `matlab/main.m` | 批量仿真主入口，按 Step 0-7 编排全流程 |
+| `matlab/run_one_case.m` | 批量仿真单场景闭环，按算法名分发到 submodule |
+| `matlab/comparison_init/load/save.m` | comparison 结构体的初始化 / 加载 / 增量保存 |
+| `matlab/run_batch_simulation.m` | 核心 (seed × alg) 双层循环 |
+| `matlab/setup_paths.m` | 路径设置 + submodule 初始化检查 |
+| `matlab/pair_is_completed.m` | 判断 (seed, alg) 是否已成功 |
+| `matlab/get_alg_results.m` | 按算法名提取所有 results |
+| `matlab/plot_one_algorithm.m` | 单算法 summary 图 |
+| `matlab/print_table_ii.m` | Table II 风格汇总表打印 |
+| `tests/baseline/freeze_baseline.m` | 冻结原 main.m 基线数据 |
+| `tests/matlab/test_run_one_case.m` | MATLAB smoke test |
+| `tests/matlab/test_parity.m` | 新旧结果回归对比 |
+| `tests/python/test_smoke.py` | Python smoke test（不需 MATLAB Engine） |
+
+## Python → MATLAB 架构
+
+```
+用户/CI
+  ↓
+根目录 main.py
+  ├── 读取 JSON 配置
+  ├── 启动一次 MATLAB Engine
+  ├── addpath(仓库根目录)
+  ├── 调用 run_one_case(config_json_path)  ← 一次跨语言调用
+  ├── 解析 MATLAB 返回的 summary JSON
+  └── 根据结果设置退出码
+            ↓
+MATLAB run_one_case.m (根目录)
+  ├── 合并 config() 默认值 + JSON 覆盖
+  ├── 调用 run_closed_loop(cfg)
+  │     ├── bezier_path 生成参考轨迹
+  │     ├── 100 步完整闭环
+  │     │   └── 每步调用 control_RSS (CVX + SDPT3)
+  │     ├── 约束检查和指标计算
+  │     └── 返回 result 结构体
+  ├── 保存 result.mat 和 summary.json
+  └── 返回 jsonencode(summary)
+```
+
+**关键原则**：Python 只调用一次 MATLAB，不逐 MPC step 调用。整个 100 步闭环在 MATLAB 内部完成，保证计时公平性和 CVX warm start 的完整性。
 
 ## 关键约束
 
-- submodule 以引用方式接入，不修改 submodule 内的代码
-- 算法实现细节与原仓库完全一致
+- submodule 以引用方式接入，不修改 submodule 内的代码（RSS_proposed 的 control_RSS.m 例外：已修复失败回退和计时解析）
+- 算法实现细节与原仓库完全一致（CVX 问题公式、代价函数、约束、K、rho 均未修改）
 - active-set 为本地实现（原仓库无此版本）
 - checkpoint 文件不可删除，用于断点续跑
+- Python 入口不计算机器人状态，不读写 MATLAB Base Workspace，不解析 MATLAB 控制台文本
+- MATLAB Engine 只启动一次，整个闭环只跨语言调用一次
