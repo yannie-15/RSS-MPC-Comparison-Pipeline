@@ -1,6 +1,6 @@
 # RSS: Robotic Steering Safety Controller
 
-基于论文 *RSS: A Reactive Safety Shield for Robotic Systems* 的四轮全向底盘模型预测控制（MPC）仿真复现项目。通过 **git submodule** 以引用方式接入作者的三种算法仓库，加上本地维护的 active-set 实现，共对比四种控制器。
+基于论文 *RSS: A Reactive Safety Shield for Robotic Systems* 的四轮全向底盘模型预测控制（MPC）仿真复现项目。通过 **git submodule** 以引用方式接入作者的算法仓库（含 active-set 分支），共对比四种控制器。
 
 ## 目录结构
 
@@ -75,15 +75,14 @@ RSS_V2/
 ├── algorithms/                    # 所有算法 (统一目录)
 │   │
 │   │ ── git submodule (引用外部仓库, 不复制代码) ────────
-│   ├── RSS_proposed/              # → github.com/serendipitjx/RSS_proposed
+│   ├── RSS_proposed/              # → github.com/serendipitjx/RSS_proposed (0121 分支)
 │   │   └── control_RSS.m          #   proposed (CVX+SDPT3, 3 次迭代)
-│   ├── RSS_sqp/                   # → github.com/serendipitjx/RSS_sqp
+│   ├── RSS_sqp/                   # → github.com/serendipitjx/RSS_sqp (main 分支)
 │   │   └── control_RSS.m          #   e-LMPC (fmincon SQP, MaxIter=1)
-│   ├── RSS_fmincon/               # → github.com/serendipitjx/RSS_fmincon
+│   ├── RSS_fmincon/               # → github.com/serendipitjx/RSS_fmincon (main 分支)
 │   │   └── control_RSS.m          #   interior-point (fmincon interior-point)
-│   │
-│   │ ── 本地实现 (原仓库无此版本) ───────────────────────
-│   └── control_active_set.m       # active-set (fmincon active-set)
+│   ├── RSS_active_set/            # → github.com/serendipitjx/RSS_fmincon (active-set 分支)
+│   │   └── control_RSS.m          #   active-set (fmincon active-set)
 │
 ├── third_party/                   # 第三方求解器源码 (参考)
 │   ├── blasfeo/                   # BLASFEO 线性代数库
@@ -94,20 +93,16 @@ RSS_V2/
 
 ## 算法引用架构（git submodule）
 
-四种算法**统一放在 `algorithms/` 目录**下，其中三种以 git submodule 引用外部仓库，active-set 为本地实现：
+四种算法**统一放在 `algorithms/` 目录**下，全部以 git submodule 引用外部仓库：
 
 | 算法 | 来源 | 接口 |
 |---|---|---|
-| proposed-3iter | `algorithms/RSS_proposed/` (submodule) | `[u, new_state_dot, velocity, diagnostics] = control_RSS(path, k, state_dot, state)` |
+| proposed-3iter | `algorithms/RSS_proposed/` (submodule, 0121 分支) | `[u, new_state_dot, velocity] = control_RSS(path, k, state_dot, state)` |
 | e-lmpc | `algorithms/RSS_sqp/` (submodule) | `[new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state)` |
 | interior-point | `algorithms/RSS_fmincon/` (submodule) | `[new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state, params)` |
-| active-set | `algorithms/control_active_set.m` (本地) | `[u, worldVelocity, bodyVelocity] = control_active_set(path, k, state_dot, state, config)` |
+| active-set | `algorithms/RSS_active_set/` (submodule, active-set 分支) | `[new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state, params)` |
 
-> **Phase 3 修复**：`control_RSS.m`（RSS_proposed）新增第 4 输出 `diagnostics`（可选，旧调用不受影响）。求解失败时不再无条件执行 `u_hat = u`，改为跟踪 `u_last_feasible` 并在失败时回退到最后可行解。求解失败后停止当前步后续 SQP 迭代。
->
-> **Phase 6 修复**：日志解析支持 SDPT3 格式（`Total CPU time (secs) = x.xx`），解析失败记为 `NaN`（不再记为 `0`）。移除了 `pause(0.01)` 延迟。
-
-`run_one_case.m` 按算法名动态切换 submodule 路径（`addpath`/`rmpath`），避免三个 `control_RSS.m` 和 `config.m` 同名冲突。`run_paper_baseline_case.m`（论文复现专用）改为在循环外一次性 `addpath` 当前算法的 submodule 并用 `onCleanup` 注册 `rmpath`，循环内不再切换路径，从根本上避免多版本 `control_RSS` 函数缓存冲突（此前 `clear functions` 不足以解决 e-lmpc/interior-point 的"输入/输出参数太多"错误）。
+`run_one_case.m` 按算法名动态切换 submodule 路径（`addpath`/`rmpath`），避免四个 `control_RSS.m` 和 `config.m` 同名冲突。`run_paper_baseline_case.m`（论文复现专用）改为在循环外一次性 `addpath` 当前算法的 submodule 并用 `onCleanup` 注册 `rmpath`，循环内不再切换路径，从根本上避免多版本 `control_RSS` 函数缓存冲突（此前 `clear functions` 不足以解决 e-lmpc/interior-point 的"输入/输出参数太多"错误）。
 
 ### 获取项目（含 submodule）
 
@@ -125,23 +120,18 @@ git submodule update --init --recursive
 
 | 场景 | 入口 | 命令 |
 |------|------|------|
-| **单次 proposed 仿真（推荐）** | Python | `python main.py --config default_python_config.json` |
-| **单次 proposed 仿真（MATLAB）** | 根目录 `main.m` | `cd D:\PROJECT\RSS_V2; main` |
-| **JSON 接口（MATLAB）** | `run_one_case.m` | `summary_json = run_one_case('default_python_config.json')` |
-| **4 算法批量对比** | `matlab/main.m` | `cd matlab; setup_paths; main` |
+| **4 算法批量对比（Python 入口）** | 根目录 `main.py` | `python main.py` |
+| **4 算法批量对比（MATLAB）** | `matlab/main.m` | `cd matlab; setup_paths; main` |
 | **论文 Section IV 复现** | `paper_reproduction.m` | `cd matlab; setup_paths; paper_reproduction` |
 | **约束验证** | `verify_constraints_RSS.m` | `cd matlab; setup_paths; verify_constraints_RSS` |
-| **Python smoke test** | `tests/python/` | `python tests/python/test_smoke.py` |
-| **MATLAB smoke test** | `tests/matlab/` | `cd D:\PROJECT\RSS_V2; test_run_one_case` |
-| **新旧结果回归** | `tests/matlab/` | 先 `freeze_baseline`，再 `test_parity` |
 
-> **注意**：根目录 `main.m` 和 `matlab/main.m` 是两个不同的入口。根目录 `main.m` 调用 `run_closed_loop` 跑单次 proposed-3iter 仿真；`matlab/main.m` 是 4 算法批量对比编排器。
+> **main.py 与 matlab/main.m 的关系**：`main.py` 通过 MATLAB Engine 调用 `matlab/main.m`，两者行为完全一致（Step 0-7 全流程）。`main.py` 只是 Python 薄包装层，方便从命令行批量运行。参数对应：`--seeds` → `'seeds'`，`--algorithms` → `'algorithms'`，`--force-regen` → `'forceRegen'`。
 
 ## 快速开始
 
-### 方式一：Python 入口（推荐）
+### 方式一：Python 入口
 
-通过 `main.py` 调用 MATLAB Engine，一次性运行完整 100 步闭环仿真。Python 负责配置和结果汇总，MATLAB 负责全部 RSS 数学、CVX+SDPT3 求解和闭环仿真。
+通过 `main.py` 调用 MATLAB Engine，执行与 `matlab/main.m` 完全相同的批量仿真流程（Step 0-7）。Python 只负责参数解析，MATLAB 负责全部 RSS 数学、CVX+SDPT3 求解和闭环仿真。
 
 #### 安装 MATLAB Engine for Python
 
@@ -161,17 +151,17 @@ python -c "import matlab.engine; print('OK')"
 #### 运行
 
 ```bash
-# 使用默认配置 (100步, SDPT3, 无实时绘图)
-python main.py --config default_python_config.json
+# 默认: 1:10 seeds, 全部 4 种算法
+python main.py
 
-# 自定义 seed 和输出目录
-python main.py --seed 3 --output results/seed_0003 --no-plot
+# 自定义 seed 范围
+python main.py --seeds 1:100
 
-# 指定 case ID
-python main.py --case-id test_001 --output results/test_001
+# 只跑一种算法
+python main.py --algorithms proposed-3iter
 
-# 开启实时绘图
-python main.py --live-plot
+# 组合参数 + 强制重新生成场景
+python main.py --seeds 1:50 --algorithms proposed-3iter,e-lmpc --force-regen
 
 # 查看所有参数
 python main.py --help
@@ -181,124 +171,28 @@ python main.py --help
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
-| `--config` | JSON 配置文件路径 | `default_python_config.json` |
-| `--case-id` | 案例标识符 | `paper_fixed_001` |
-| `--seed` | 随机种子 | `1` |
-| `--output` | 输出目录 | `results/<case_id>` |
-| `--live-plot` | 开启 MATLAB 实时绘图 | 关闭 |
-| `--no-plot` | 关闭绘图（默认） | — |
-| `--save-figures` | 保存图片到输出目录 | 关闭 |
-| `--force` | 覆盖已有输出目录 | 关闭 |
+| `--seeds` | 种子范围，格式 `start:end` 或单个整数 | `1:10` |
+| `--algorithms` | 算法列表，逗号分隔 | `e-lmpc,active-set,interior-point,proposed-3iter` |
+| `--force-regen` | 强制重新生成场景文件 | 关闭 |
 
 #### 退出码
 
 | 退出码 | 含义 |
 |--------|------|
-| 0 | 成功（算法完成所有步） |
-| 2 | 算法失败（求解器失败、约束违反等） |
-| 3 | 基础设施错误（MATLAB Engine 未安装、配置错误等） |
-
-#### `default_python_config.json` 字段
-
-```json
-{
-  "case_id": "paper_fixed_001",
-  "seed": 1,
-  "trajectory_mode": "paper_fixed",
-  "solver": "sdpt3",
-  "num_steps": 100,
-  "live_plot": false,
-  "save_figures": false,
-  "save_full_log": false,
-  "output_dir": "results/paper_fixed_001"
-}
-```
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `case_id` | string | 案例标识符，用于输出目录命名 |
-| `seed` | int | 随机种子（未来随机场景用，当前固定轨迹不依赖） |
-| `trajectory_mode` | string | 轨迹模式（`paper_fixed` = 论文固定贝塞尔轨迹） |
-| `solver` | string | CVX 求解器（`sdpt3` 或 `ecos`，当前推荐 `sdpt3`） |
-| `num_steps` | int | 仿真步数（默认 100，会同步 `num_path_pts`） |
-| `live_plot` | bool | 是否开启 MATLAB 实时绘图 |
-| `save_figures` | bool | 是否保存图片到输出目录 |
-| `save_full_log` | bool | 是否保存完整日志 |
-| `output_dir` | string | 输出目录路径 |
+| 0 | 成功（全部 (seed, algorithm) 组合完成） |
+| 2 | 仿真失败 |
+| 3 | 基础设施错误（MATLAB Engine 未安装等） |
 
 #### 输出
 
-每次运行在 `output_dir` 中生成：
-- `resolved_config.json` — 合并后的完整配置
-- `result.mat` — 完整仿真数据（状态、速度、控制、轮速、轮角、求解时间等）
-- `summary.json` — 仿真摘要（成功/失败、RMSE、代价、约束违反等）
+每次运行在 `results/` 目录生成（与 `matlab/main.m` 完全一致）：
+- `comparison_checkpoint.mat` — 断点续跑 checkpoint（增量保存）
+- `comparison_final.mat` — 完整 comparison 结构体
+- 各算法的 summary 图与 CSV（每算法完成后即时生成）
+- 论文对比图（Step 6）
+- Table II 汇总打印（Step 7）
 
-#### Python smoke test
-
-```bash
-python tests/python/test_smoke.py
-```
-
-不需要 MATLAB Engine，仅测试 Python 模块导入和 JSON 解析。
-
-### 方式二：MATLAB 入口（单次 proposed 仿真）
-
-#### 兼容入口 `main.m`（根目录）
-
-```matlab
-cd D:\PROJECT\RSS_V2
-main                    % 调用 run_closed_loop, 开实时绘图
-```
-
-#### 直接调用 `run_closed_loop`
-
-```matlab
-cd D:\PROJECT\RSS_V2
-cfg = config();         % 从 algorithms/RSS_proposed/config.m 加载默认参数
-cfg.live_plot = false;  % 关闭实时绘图 (批量运行推荐)
-result = run_closed_loop(cfg);
-
-% result 包含完整仿真数据:
-%   result.state_history         - Nx3 状态 [x, y, psi]
-%   result.body_velocity_history - Nx3 车体系速度
-%   result.control_history       - Nx3 控制增量
-%   result.wheel_speed_history   - Nx4 轮速
-%   result.wheel_angle_history   - Nx4 轮角
-%   result.steering_rate_history - Nx4 转向率
-%   result.solver_time_history   - Nx1 每步求解时间
-%   result.cvx_status_history    - {Nx1} CVX 状态
-%   result.trajectory_cost       - 总代价 J
-%   result.position_rmse         - 位置 RMSE
-%   result.completed_steps       - 完成步数
-%   result.success               - 是否成功
-```
-
-#### JSON 接口 `run_one_case`（与 Python 桥接）
-
-```matlab
-cd D:\PROJECT\RSS_V2
-summary_json = run_one_case('default_python_config.json');
-summary = jsondecode(summary_json);
-disp(summary.success);
-disp(summary.position_rmse);
-```
-
-> `run_one_case` 会自动创建 `output_dir`，保存 `result.mat` 和 `summary.json`。
-
-#### MATLAB 测试
-
-```matlab
-cd D:\PROJECT\RSS_V2
-test_run_one_case    % smoke test: run_closed_loop + run_one_case + diagnostics
-
-% 新旧结果回归对比 (需先冻结基线)
-cd tests/baseline
-freeze_baseline      % 冻结原 main.m 基线 (约 20 分钟, 300 次 SDPT3)
-cd D:\PROJECT\RSS_V2
-test_parity          % 12 项检查: state/velocity/control/cost/RMSE/约束
-```
-
-### 方式三：4 算法批量对比（`matlab/main.m`）
+### 方式二：MATLAB 入口
 
 批量对比 proposed-3iter / e-lmpc / interior-point / active-set 四种算法，支持多 seed。
 
@@ -307,7 +201,7 @@ test_parity          % 12 项检查: state/velocity/control/cost/RMSE/约束
 - MATLAB（需 Optimization Toolbox 提供 fmincon；需 CVX + SDPT3 用于 proposed 算法）
 - git（用于 submodule 管理）
 
-> **注（ECOS → SDPT3 切换）**：原 RSS_proposed submodule 0121 分支 `control_RSS.m` 内部使用 `cvx_solver ECOS`，但 ECOS 2.0.10 在 MATLAB R2026a 上对此 problem 触发 segfault（访问冲突，MATLAB 整体崩溃）。已将 submodule 的 `control_RSS.m` 第34行改为 `cvx_solver SDPT3`，并在 [run_paper_baseline_case.m](matlab/run_paper_baseline_case.m) 中针对 proposed-3iter 算法添加全局 `cvx_solver sdpt3` 兜底 + 首步诊断输出（打印 control_RSS.m 实际路径、第34行内容、CVX 可用 solver 列表），便于定位缓存/遮蔽问题。同时修复了日志解析中 `runtime_line` 为空时直接索引 `{1}` 导致报错的问题（改为先判空再输出）。ECOS 长期方案待定（重新编译 ECOS 或降级 MATLAB）。
+> **注（ECOS → SDPT3 切换）**：原 RSS_proposed submodule 0121 分支 `control_RSS.m` 内部使用 `cvx_solver ECOS`，但 ECOS 2.0.10 在 MATLAB R2026a 上对此 problem 触发 segfault（访问冲突，MATLAB 整体崩溃）。已将 submodule 的 `control_RSS.m` 第34行改为 `cvx_solver SDPT3`，并在 [run_paper_baseline_case.m](matlab/run_paper_baseline_case.m) 中针对 proposed-3iter 算法添加全局 `cvx_solver sdpt3` 兜底 + 首步诊断输出（打印 control_RSS.m 实际路径、第34行内容、CVX 可用 solver 列表），便于定位缓存/遮蔽问题。ECOS 长期方案待定（重新编译 ECOS 或降级 MATLAB）。
 
 #### 运行批量对比
 
@@ -376,7 +270,7 @@ paper_reproduction({'e-lmpc','active-set'})         % 只重跑指定算法, 保
 | proposed-3iter | `algorithms/RSS_proposed/config.m` |
 | e-lmpc | `algorithms/RSS_sqp/config.m` |
 | interior-point | `algorithms/RSS_fmincon/config.m` |
-| active-set | `matlab/defaultConfig.m`（本地，对齐 RSS_fmincon） |
+| active-set | `algorithms/RSS_active_set/config.m` |
 
 **固定初始状态**（论文无随机性，所有算法统一）：
 
@@ -412,7 +306,7 @@ paper_reproduction({'e-lmpc','active-set'})         % 只重跑指定算法, 保
 - `paper_reproduction.mat` — 完整 comparison 结构体
 
 **额外诊断**（相比 `run_one_case.m`，由 `run_paper_baseline_case.m` 提供）：
-- 每步 `iter_num`（求解器迭代数，proposed/active-set 为 NaN）
+- 每步 `iter_num`（求解器迭代数，proposed 为 NaN）
 - 解的有限性检查（NaN/Inf 标记失败步）
 - warm-up 排除后的中位数/分位数耗时（P1-4 复现要求）
 
@@ -528,7 +422,7 @@ MATLAB run_one_case.m (根目录)
 
 - submodule 以引用方式接入，不修改 submodule 内的代码（RSS_proposed 的 control_RSS.m 例外：已修复失败回退和计时解析）
 - 算法实现细节与原仓库完全一致（CVX 问题公式、代价函数、约束、K、rho 均未修改）
-- active-set 为本地实现（原仓库无此版本）
+- active-set 为 RSS_fmincon 仓库的 active-set 分支（同仓库不同分支，独立 submodule）
 - checkpoint 文件不可删除，用于断点续跑
 - Python 入口不计算机器人状态，不读写 MATLAB Base Workspace，不解析 MATLAB 控制台文本
 - MATLAB Engine 只启动一次，整个闭环只跨语言调用一次

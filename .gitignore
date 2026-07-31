@@ -12,3 +12,8 @@ Thumbs.db
 
 # WorkBuddy
 .workbuddy/
+
+# 仿真产物 (不提交)
+results/
+scenario_bank/*.mat
+matlab/cvx_log_temp.txt

@@ -7,3 +7,7 @@
 [submodule "algorithms/RSS_fmincon"]
 	path = algorithms/RSS_fmincon
 	url = https://github.com/serendipitjx/RSS_fmincon.git
+[submodule "algorithms/RSS_active_set"]
+	path = algorithms/RSS_active_set
+	url = https://github.com/serendipitjx/RSS_fmincon.git
+	branch = active-set

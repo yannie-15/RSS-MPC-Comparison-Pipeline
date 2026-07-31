@@ -2,16 +2,16 @@ function summary = run_one_case(config, scenario)
 % RUN_ONE_CASE 运行单次闭环仿真并计算完整指标
 %
 % 算法调用架构:
-%   - proposed-3iter  → algorithms/RSS_proposed/control_RSS.m  (git submodule)
-%   - e-lmpc          → algorithms/RSS_sqp/control_RSS.m       (git submodule)
-%   - interior-point  → algorithms/RSS_fmincon/control_RSS.m   (git submodule)
-%   - active-set      → algorithms/control_active_set.m        (本地实现)
+%   - proposed-3iter  → algorithms/RSS_proposed/control_RSS.m   (git submodule, 0121 分支)
+%   - e-lmpc          → algorithms/RSS_sqp/control_RSS.m        (git submodule)
+%   - interior-point  → algorithms/RSS_fmincon/control_RSS.m    (git submodule, main 分支)
+%   - active-set      → algorithms/RSS_active_set/control_RSS.m (git submodule, active-set 分支)
 %
 % 三个 submodule 的接口各不相同, 本函数负责适配:
-%   RSS_proposed:  [new_state_dot] = control_RSS(path, k, state_dot, state)
+%   RSS_proposed (0121):  [u, new_state_dot, velocity] = control_RSS(path, step, state_dot, state)
 %   RSS_sqp:       [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state)
-%   RSS_fmincon:   [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state, params)
-%   本地 active-set: [u, worldVelocity, bodyVelocity] = control_active_set(path, k, state_dot, state, config)
+%   RSS_fmincon / RSS_active_set:
+%                    [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state, params)
 %
 % Config 覆盖机制:
 %   proposed / e-lmpc 的 control_RSS 不接收外部 config, 内部调 config()。
@@ -19,7 +19,8 @@ function summary = run_one_case(config, scenario)
 %   随机 config (含 seed 场景参数), 通过 addpath 覆盖 submodule 的 config.m。
 %   interior-point / active-set 接收外部 config, 直接传入。
 %
-% 注: RSS_proposed 只输出 new_state_dot, 缺失的 u/solve_time 记为 NaN (用户已确认接受).
+% 注: RSS_proposed 0121 分支返回 [u, new_state_dot, velocity], 其中 u 为 3×K 矩阵,
+%      new_state_dot 为世界坐标系速度, velocity 为车体系速度。solve_time/iter_num 缺失记为 NaN。
 
     if nargin < 1 || isempty(config)
         config = defaultConfig();
@@ -43,10 +44,11 @@ function summary = run_one_case(config, scenario)
     workspace_root = fileparts(script_dir);
     algorithms_dir = fullfile(workspace_root, 'algorithms');
     submodule_dirs = containers.Map( ...
-        {'proposed-3iter', 'e-lmpc', 'interior-point'}, ...
+        {'proposed-3iter', 'e-lmpc', 'interior-point', 'active-set'}, ...
         {fullfile(algorithms_dir, 'RSS_proposed'), ...
          fullfile(algorithms_dir, 'RSS_sqp'), ...
-         fullfile(algorithms_dir, 'RSS_fmincon')} ...
+         fullfile(algorithms_dir, 'RSS_fmincon'), ...
+         fullfile(algorithms_dir, 'RSS_active_set')} ...
     );
 
     %% =====================================================
@@ -104,19 +106,14 @@ function summary = run_one_case(config, scenario)
             % 按算法名分发调用
             switch algorithm
                 case 'proposed-3iter'
-                    % RSS_proposed: [new_state_dot] = control_RSS(path, k, state_dot, state)
+                    % RSS_proposed 0121: [u, new_state_dot, velocity] = control_RSS(path, step, state_dot, state)
                     addpath(submodule_dirs('proposed-3iter'));
                     addpath(override_dir);  % 确保 main 的 config 覆盖 submodule 的 config
-                    worldVelocity = control_RSS(path, k, lastBodyVelocity, state');
+                    [u_full, worldVelocity, bodyVelocity] = ...
+                        control_RSS(path, k, lastBodyVelocity, state');
                     rmpath(submodule_dirs('proposed-3iter'));
-                    % 反推车体速度 (有 0.98 衰减, 近似)
-                    R_bw = [cos(state(3)), sin(state(3)), 0;
-                           -sin(state(3)), cos(state(3)), 0;
-                            0,             0,             1];
-                    bodyVelocity = R_bw * worldVelocity;
-                    % u 无法精确获取 (0.98 衰减), 记为 NaN
-                    u = NaN(3, 1);
-                    solve_time = NaN;
+                    u = u_full(:, 1);
+                    solve_time = NaN;  % submodule 不输出 solve_time (用 diary 捕获)
 
                 case 'e-lmpc'
                     % RSS_sqp: [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state)
@@ -137,11 +134,13 @@ function summary = run_one_case(config, scenario)
                     u = bodyVelocity - lastBodyVelocity;
 
                 case 'active-set'
-                    % 本地: [u, worldVelocity, bodyVelocity] = control_active_set(path, k, state_dot, state, config)
-                    [u_full, worldVelocity, bodyVelocity] = ...
-                        control_active_set(path, k, lastBodyVelocity, state', config);
-                    u = u_full(:, 1);
-                    solve_time = NaN;  % 本地版本不输出 solve_time
+                    % RSS_active_set (active-set 分支): [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state, params)
+                    addpath(submodule_dirs('active-set'));
+                    addpath(override_dir);  % 确保 main 的 config 覆盖 submodule 的 config
+                    [worldVelocity, bodyVelocity, solve_time, ~] = ...
+                        control_RSS(path, k, lastBodyVelocity, state', config);
+                    rmpath(submodule_dirs('active-set'));
+                    u = bodyVelocity - lastBodyVelocity;
 
                 otherwise
                     error('run_one_case:UnknownAlgorithm', ...

@@ -59,11 +59,12 @@ class MatlabBridge:
             str(self.repo_root),
             nargout=0,
         )
-        # Add matlab/ directory for shared utilities (computeMetrics, etc.)
+        # 设置 MATLAB 工作目录为 matlab/, 避免根目录 main.m (无参数版) 遮蔽 matlab/main.m (varargin 版)
         matlab_dir = str(self.repo_root / "matlab")
         if Path(matlab_dir).exists():
+            self.engine.cd(matlab_dir, nargout=0)
             self.engine.addpath(matlab_dir, nargout=0)
-        # Add algorithms/ for local active-set
+        # 添加 algorithms/ 用于本地 active-set
         alg_dir = str(self.repo_root / "algorithms")
         if Path(alg_dir).exists():
             self.engine.addpath(alg_dir, nargout=0)
@@ -96,6 +97,51 @@ class MatlabBridge:
         summary = parse_summary(raw)
         print_summary(summary)
         return summary
+
+    def run_main(self, seeds: list[int], algorithms: list[str], force_regen: bool = False) -> bool:
+        """调用 MATLAB main.m 批量入口 (Step 0-7 全流程)。
+
+        等价于在 MATLAB 中执行:
+            main('seeds', 1:10, 'algorithms', {...}, 'forceRegen', false)
+
+        Args:
+            seeds: 种子列表, 如 [1, 2, ..., 10]。
+            algorithms: 算法名列表, 如 ['proposed-3iter', 'e-lmpc']。
+            force_regen: 是否强制重新生成场景文件。
+
+        Returns:
+            True 如果 MATLAB main.m 正常执行完成, False 如果抛出异常。
+
+        Raises:
+            RuntimeError: 如果 MATLAB Engine 未启动。
+        """
+        if not self._started or self.engine is None:
+            raise RuntimeError("MATLAB Engine not started. Call bridge.start() first.")
+
+        import matlab
+
+        # Python list[int] → matlab.double (对应 MATLAB 1×N double 数组)
+        seeds_matlab = matlab.double(seeds)
+        # Python list[str] → MATLAB 1×N cell array of char (main.m 的 parse_args 兼容此格式)
+        algorithms_matlab = algorithms
+
+        print(f"[matlab_bridge] 调用 main.m: seeds={seeds[0]}:{seeds[-1]} "
+              f"(共 {len(seeds)} 个), algorithms={algorithms}, forceRegen={force_regen}")
+
+        try:
+            # main.m 返回 comparison 结构体; 这里不取返回值 (Step 6/7 内部已完成画图/打印)
+            # nargout=0 让 MATLAB 不强制要求接收返回值
+            self.engine.main(
+                'seeds', seeds_matlab,
+                'algorithms', algorithms_matlab,
+                'forceRegen', bool(force_regen),
+                nargout=0,
+            )
+            print("[matlab_bridge] main.m 执行完成。")
+            return True
+        except Exception as e:
+            print(f"[matlab_bridge] main.m 执行失败: {e}")
+            return False
 
     def close(self) -> None:
         """Shut down the MATLAB Engine."""

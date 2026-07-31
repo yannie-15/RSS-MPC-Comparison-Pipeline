@@ -47,10 +47,11 @@ function summary = run_paper_baseline_case(config, scenario)
     workspace_root = fileparts(script_dir);
     algorithms_dir = fullfile(workspace_root, 'algorithms');
     submodule_dirs = containers.Map( ...
-        {'proposed-3iter', 'e-lmpc', 'interior-point'}, ...
+        {'proposed-3iter', 'e-lmpc', 'interior-point', 'active-set'}, ...
         {fullfile(algorithms_dir, 'RSS_proposed'), ...
          fullfile(algorithms_dir, 'RSS_sqp'), ...
-         fullfile(algorithms_dir, 'RSS_fmincon')} ...
+         fullfile(algorithms_dir, 'RSS_fmincon'), ...
+         fullfile(algorithms_dir, 'RSS_active_set')} ...
     );
 
     %% =====================================================
@@ -70,7 +71,9 @@ function summary = run_paper_baseline_case(config, scenario)
             alg_params = feval('config');
             rmpath(submodule_dirs('interior-point'));
         case 'active-set'
-            alg_params = defaultConfig();
+            addpath(submodule_dirs('active-set'));
+            alg_params = feval('config');
+            rmpath(submodule_dirs('active-set'));
         otherwise
             error('run_paper_baseline_case:UnsupportedAlgorithm', ...
                 '不支持算法: %s', algorithm);
@@ -84,7 +87,7 @@ function summary = run_paper_baseline_case(config, scenario)
     % (此前 clear functions 不足以解决多版本同名函数解析冲突)
     % ======================================================
     switch algorithm
-        case {'proposed-3iter', 'e-lmpc', 'interior-point'}
+        case {'proposed-3iter', 'e-lmpc', 'interior-point', 'active-set'}
             addpath(submodule_dirs(algorithm));
             % onCleanup: 函数退出时自动 rmpath, 避免路径残留影响后续算法
             sub_to_remove = submodule_dirs(algorithm);
@@ -208,12 +211,11 @@ function summary = run_paper_baseline_case(config, scenario)
                     u = bodyVelocity - lastBodyVelocity;
 
                 case 'active-set'
-                    % 本地: [u, worldVelocity, bodyVelocity] = control_active_set(path, k, state_dot, state, config)
-                    [u_full, worldVelocity, bodyVelocity] = ...
-                        control_active_set(path, k, lastBodyVelocity, state', config);
-                    u = u_full(:, 1);
-                    solve_time = toc(step_tic);  % 本地版本不输出 solve_time, 用外层计时
-                    iter_num = NaN;
+                    % RSS_active_set (active-set 分支): [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state, params)
+                    % submodule 路径已在循环外一次性 addpath
+                    [worldVelocity, bodyVelocity, solve_time, iter_num] = ...
+                        control_RSS(path, k, lastBodyVelocity, state', config);
+                    u = bodyVelocity - lastBodyVelocity;
 
                 otherwise
                     error('run_paper_baseline_case:UnsupportedAlgorithm', ...
