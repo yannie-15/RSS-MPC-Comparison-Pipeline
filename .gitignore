@@ -1,6 +1,7 @@
 # Python cache
 __pycache__/
 *.pyc
+*.egg-info/
 
 # MATLAB
 *.asv
@@ -32,3 +33,4 @@ build/
 t.c
 t.exe
 *.tmp
+test_hpipm.py
