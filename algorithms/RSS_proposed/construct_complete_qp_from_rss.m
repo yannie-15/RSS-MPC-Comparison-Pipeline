@@ -30,21 +30,24 @@ function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, sta
 %       C^k_{i,n}(u, û) = A^k_{i,n}(u) - B^k_{i,n}(û) - L^k_{i,n}(u, û) ≤ 0
 %       其中 A, B, L 定义见公式 (16) 及 Appendix A
 %
-% dense QCQP 标准形式 (HPIPM 论文 Section 2.1 的简化子集):
+% dense QCQP 标准形式 (HPIPM 论文 Section 2.1):
 %
-% HPIPM 完整 dense QP 形式 (HPIPM 论文公式 (1)) 含 slack 变量与双侧约束:
-%   min  0.5·v^T·H·v + g^T·v + 0.5·(s^l,s^u)^T·Z·(s^l,s^u) + ...
-%   s.t. A·v = b                                    (等式)
-%        [lb; lg] <= [J^{b,v}; C]·v + J^s·s^l       (下界, 带 slack)
-%        [J^{b,v}; C]·v - J^s·s^u <= [ub; ug]      (上界, 带 slack)
-%        0.5·v^T·Hq_i·v + gq_i^T·v <= uq_i           (二次约束, 带 slack)
-%        s^l >= s^l_lb, s^u >= s^u_lb                (slack 非负)
+% [HPIPM 论文公式 (1) — 完整 dense QP (线性约束, 含 slack)]
+%   min_{v,s}  1/2 [v;1]^T [H g; g^T 0] [v;1]
+%             + 1/2 [s^l;s^u;1]^T [Z^l 0 z^l; 0 Z^u z^u; (z^l)^T (z^u)^T 0] [s^l;s^u;1]
+%   s.t. A v = b                                                          (等式)
+%        [v_; d_] <= [J^{b,v}; C] v + [J^{s,v}; J^{s,g}] s^l              (下界+slack)
+%        [J^{b,v}; C] v - [J^{s,v}; J^{s,g}] s^u <= [v^; d^]             (上界+slack)
+%        s^l >= s^l_lb,  s^u >= s^u_lb                                     (slack 非负)
 %
-% 本代码仅使用等式约束 + 二次不等式约束子集 (设 nb=0, ng=0, ns=0):
-%   min  0.5·x^T·H·x + g^T·x
-%   s.t. A·x = b                                    (动力学等式, 论文 (20c))
-%        0.5·x^T·Hq_i·x + gq_i^T·x <= uq_i          (二次不等式: 轮速 (20b) + 转向锥 (20a))
-% 即 HPIPM 的 slack/box/线性约束均未启用, 退化为纯 QCQP
+% [dense QCQP 扩展 — 在 dense QP 基础上增加二次约束]
+%   0.5 v^T Hq_i v + gq_i^T v <= uq_i    (二次不等式, 亦可带 slack)
+%
+% [本代码使用硬约束子集 (nb=0, ng=0, ns=0, 无 slack)]
+%   min  0.5 x^T H x + g^T x
+%   s.t. A x = b                                  (动力学等式, 论文 (20c))
+%        0.5 x^T Hq_i x + gq_i^T x <= uq_i        (二次不等式: 轮速 (20b) + 转向锥 (20a))
+% 即 HPIPM 的 slack/box/一般线性约束均未启用, 退化为纯 QCQP (硬约束)
 %
 % 变量排列: x = [u(:); nu(:)]  (36维, K=6)
 %   u(i,k) 的全局索引 = (k-1)*3 + i         (i=1,2,3; k=1,...,K)
