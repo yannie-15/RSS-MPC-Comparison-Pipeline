@@ -257,6 +257,50 @@ delta_theta = dt * phidotmax;  % = 0.01 * 5*pi = pi/20
 
 目标函数形式：`0.5*x'*H*x + g'*x + const`
 
+#### 为什么是这个形式？
+
+这是 **HPIPM dense QCQP 求解器要求的标准形式**（参见 [hpipm_qp_solver.py:28](algorithms/RSS_proposed/hpipm_qp_solver.py#L28)）：
+
+```
+min  0.5 x' H x + g' x
+```
+
+代码构造的代价项必须套进这个模板。
+
+**论文原始代价 vs 标准形式**
+
+论文公式 (18) 的代价是：
+
+```
+g(u) = sum_k [ e_k' Q e_k + u_k' R u_k ]     (二次型, 无 0.5 系数)
+```
+
+展开后形如 `||·||^2 = v' v`。要把它写成 `0.5 x' H x + g' x`，必须做系数换算：
+
+| 原始项 | 标准形式贡献 |
+|---|---|
+| `w · ‖S‖^2` (二次) | `H += 2·w`，因 `0.5·x'(2w·I)x = w·‖x‖^2` |
+| `2·w·c'·S` (一次) | `g += 2·w·c`，因 `g'x = 2·w·c'·x` |
+| `w·‖c‖^2` (常数) | 累加到 `objective_constant` |
+
+这就是代码里 `H_mat(...) += 2*w_pos*dt^2`（[construct_complete_qp_from_rss.m:166-167](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L166-L167)）、`g_vec(...) += 2*w_pos*dt*grad_dir`（[construct_complete_qp_from_rss.m:176-177](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L176-L177)）系数都带 `2` 的原因——把 `‖v‖^2` 形式适配到 HPIPM 的 `0.5·x'Hx` 形式。
+
+**常数项 const 的作用**
+
+`objective_constant`（[construct_complete_qp_from_rss.m:255-274](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L255-L274)）包含 `‖c_k‖^2`、`psi_c_k^2`、`rho*‖u_hat‖^2` 等不依赖决策变量的常数。它**不影响最优解 x\***，只用于事后计算真实的 `obj_value` 做指标对比（论文 Table II 的 J_total）。所以 HPIPM 求解时不需要它，但保留在结构体里供 MATLAB 端使用。
+
+**拆解总结**
+
+```
+0.5 x' H x  ← 二次项: 位置跟踪、姿态跟踪、控制正则化、RSS 强凸正则
+   g' x     ← 一次项: 跟踪误差的常数偏移、RSS 正则的 -2*rho*u_hat 项
+   const    ← 常数项: ‖c_k‖^2、ψ_c_k^2、rho·‖u_hat‖^2 (不影响最优解, 仅用于指标)
+```
+
+这种分离是为了把论文公式 (18) 的原始代价 `e'Qe + u'Ru + rho*‖u-u_hat‖^2` 套进 HPIPM 求解器规定的 `0.5*x'Hx + g'x` 模板。
+
+---
+
 **论文公式 (17)** — 凸子问题 Q_K(u_hat) 的目标函数：
 ```
 f(u, u_hat) = g(u) + rho * ||u - u_hat||^2
