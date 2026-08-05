@@ -228,6 +228,10 @@ function plot_one_algorithm_paper(comparison, alg_idx, results_dir)
     algorithm = comparison.algorithms{alg_idx};
     alg_results = get_alg_results_paper(comparison, alg_idx);
 
+    if isempty(alg_results)
+        fprintf('[算法 %s] 无结果，跳过绘图\n', algorithm);
+        return;
+    end
     n_success = sum([alg_results.success]);
     if n_success == 0
         fprintf('[算法 %s] 无成功案例，跳过绘图\n', algorithm);
@@ -463,7 +467,11 @@ function print_table_ii_paper(comparison)
     for alg_idx = 1:num_algorithms
         alg = algorithms{alg_idx};
         alg_results = get_alg_results_paper(comparison, alg_idx);
-        n_success = sum([alg_results.success]);
+        if isempty(alg_results)
+            n_success = 0;
+        else
+            n_success = sum([alg_results.success]);
+        end
 
         if n_success > 0
             success_mask = [alg_results.success];
