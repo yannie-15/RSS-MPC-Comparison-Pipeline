@@ -1,41 +1,50 @@
 function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, state_dot, state)
-% CONTROL_RSS  RSS proposed 算法控制器 (HPIPM dense QCQP, 3 次 SQP 迭代)
+% CONTROL_RSS  论文 Algorithm 1 (Trajectory optimizer for SWMRs) 的实现
 %
-% 架构:
-%   1. MATLAB 端调用 construct_complete_qp_from_rss 构造 QP 矩阵
-%      (H, g, A, b, Hq, gq, uq)
-%   2. Python 端 hpipm_qp_solver.solve_qcqp 仅负责求解
-%   3. SQP 外层循环 (max_iter=3) 保留在 MATLAB 端
+% 论文: RSS26 "Exploit Agile Mobility of Steerable-Wheeled Mobile Robots:
+%        A Fast Motion Planning Approach"
 %
-% 输入:
-%   path      : 3xN 参考轨迹
-%   step      : 当前仿真步 (1-based)
-%   state_dot : 3x1 上一步车体系速度 (last_vel)
-%   state     : 1x3 当前状态 [x, y, psi]
+% 本函数对应论文 Algorithm 1 的全部流程:
+%   - 输入: 当前速度 ν_0 (state_dot), 当前位姿 state (ξ_w)
+%   - 初始化 u^(0) (论文建议 static init: u^(0)=0)
+%   - while m < max_iter (论文 Algorithm 1 line 3-9):
+%       1. 构造凸子问题 Q_K(u^(m)) (论文公式 17)
+%          → 调用 construct_complete_qp_from_rss 构造 QCQP 矩阵
+%       2. 求解 u^(m+1) = S(u^(m)) (论文 Algorithm 1 line 5)
+%          → 调用 Python HPIPM dense QCQP 求解器
+%       3. 更新 u_hat = u (论文 Algorithm 1 line 9)
+%   - 输出: ν_1 = ν_0 + u_1 (论文 Algorithm 1 line 11)
 %
-% 输出:
-%   u            : 3xK 控制增量矩阵 (最后可行解)
-%   new_state_dot: 3x1 世界系状态导数
-%   velocity     : 3x1 车体系速度
-%   diagnostics  : struct 每次子迭代诊断
+% 论文中的符号对照:
+%   state_dot   = ν_0 (当前车体系速度, 论文 (8) 式)
+%   u           = u ∈ R^{3×K} (优化变量, 控制增量序列, 论文 (9) 式)
+%   u_hat       = û (上一次迭代解, 用于凸化, 论文 Prop.1)
+%   K = 6       = 预测时域 (论文 IV-A: "prediction horizon K=6")
+%   rho = 0.01  = ρ (强凸正则化参数, 论文 (17) 式)
+%   k1 = 1      = 输出增益 (论文 Algorithm 1 line 11: ν_1 = ν_0 + u_1)
+%
+% 求解器: 论文原用 CVX+ECOS, 本实现替换为 HPIPM dense QCQP (Python 接口)
 
     params = config();
 
     % ================= Param Setup =================
-    K = 6; rho = 0.01; k1 = 1; epsilon = 0;  % k1=1 硬编码
-    current_xy = [state(1), state(2)]';
-    psi0 = state(3); current_nu = state_dot;
+    % 论文 IV-A: K=6, dt=0.01s, t_end=1s
+    K = 6; rho = 0.01; k1 = 1; epsilon = 0;  % k1=1: 论文 Alg.1 line 11 增益
+    current_xy = [state(1), state(2)]';       % 当前位置 (世界系)
+    psi0 = state(3); current_nu = state_dot;   % 当前航向 / ν_0
 
     % ================= 迭代 Setup =================
-    max_iter = 3;  % 子问题迭代次数
-    u_hat = zeros(3, K);
+    % 论文 Algorithm 1 line 1: Initialize u^(0) ∈ ri(D(P_K))
+    % 采用 static initialization (论文: "set u^(0)=0")
+    max_iter = 3;  % 论文 IV-B: "maximum number of iterations is set to 3"
+    u_hat = zeros(3, K);  % u^(0) = 0 (static init)
 
     global solver_time_array;
     if ~exist('solver_time_array', 'var') || isempty(solver_time_array)
         solver_time_array = [];
     end
 
-    % Phase 6: 诊断结构体
+    % 诊断结构体 (记录每次迭代, 对应论文 Alg.1 的 m 循环)
     diagnostics = struct();
     diagnostics.iterations = struct();
     diagnostics.iterations.status = cell(1, max_iter);
@@ -46,17 +55,16 @@ function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, sta
     diagnostics.max_iter = max_iter;
 
     % ================= Python 环境路径设置 =================
+    % persistent: 保证 Python 模块只加载一次, 避免 libhpipm.dll 内存泄漏
     persistent py_path_added py_reloaded;
     if isempty(py_path_added)
         script_path = fileparts(mfilename('fullpath'));
-        % hpipm_qp_solver.py 现与 control_RSS.m 同目录 (algorithms/RSS_proposed/)
         if exist(script_path, 'dir')
             sys_mod = py.importlib.import_module('sys');
             py.getattr(sys_mod, 'path').append(script_path);
         end
         py_path_added = true;
     end
-    % 首次调用时重新加载 Python 模块, 确保使用最新的 .py 代码
     if isempty(py_reloaded)
         try
             solver_mod = py.importlib.import_module('hpipm_qp_solver');
@@ -66,15 +74,18 @@ function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, sta
         end
     end
 
-    % ================= SQP 外层循环 =================
-    % 无论成功失败都更新 u_hat, 不 break, 不回退
+    % ================= SQP 外层循环 (论文 Algorithm 1 line 3-9) =================
+    % 论文 Theorem 2: 序列 {u^(m)} 单调下降且收敛到 P_K 的驻点
+    % 无条件更新 u_hat (论文 Alg.1 无 break-on-failure, descent inequality 保证下降)
     for m = 1 : max_iter
         try
-            % ========== MATLAB 端构造 QP ==========
+            % ========== 论文 Alg.1 line 4: 构造凸子问题 Q_K(u^(m)) ==========
+            % 论文公式 (17): min f(u,û)=g(u)+ρ||u-û||^2  s.t. C_k_{i,n}<=0, u∈∩U_j
+            % 这里将 Q_K 转为 dense QCQP 标准形式 (H,g,A,b,Hq,gq,uq)
             qp = construct_complete_qp_from_rss(path, step, current_nu, state, u_hat, params);
 
-            % ========== 把 Hq/gq cell 数组转为 numpy 数组 ==========
-            % Hq_list 是 cell array of (n_var x n_var), 堆叠为 3D 数组 (n_var, n_var, n_qcqp)
+            % ========== 数据格式转换: cell → 3D numpy ==========
+            % HPIPM Python 接口要求 Hq 为 3D 数组 (n_var, n_var, n_qcqp)
             n_var = qp.n_var;
             n_qcqp = qp.n_qcqp;
             Hq_3d = zeros(n_var, n_var, n_qcqp);
@@ -84,28 +95,32 @@ function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, sta
                 gq_2d(:, i) = qp.gq{i};
             end
 
-            % ========== 调用 Python HPIPM 求解器 ==========
+            % ========== 论文 Alg.1 line 5: 求解 u^(m+1) = S(u^(m)) ==========
+            % 调用 HPIPM dense QCQP 求解器 (替代论文中的 CVX+ECOS)
+            % HPIPM 论文: "hpipm: a high-performance quadratic programming framework"
+            %   求解: min 0.5*x'Hx + g'x  s.t. Ax=b, 0.5*x'Hq_i*x + gq_i'x <= uq_i
             result = py.hpipm_qp_solver.solve_qcqp(...
-                py.numpy.array(qp.H), ...
-                py.numpy.array(qp.g), ...
-                py.numpy.array(qp.A), ...
-                py.numpy.array(qp.b), ...
-                py.numpy.array(Hq_3d), ...
-                py.numpy.array(gq_2d), ...
-                py.numpy.array(qp.uq'), ...
-                py.bool(false) ...
+                py.numpy.array(qp.H), ...        % H: Hessian (论文 (18)+(19) 展开)
+                py.numpy.array(qp.g), ...        % g: 线性项
+                py.numpy.array(qp.A), ...        % A: 等式约束 (论文 (20c) 动力学)
+                py.numpy.array(qp.b), ...        % b: 等式约束右端
+                py.numpy.array(Hq_3d), ...       % Hq: 二次约束 Hessian (论文 (20a)+(20b))
+                py.numpy.array(gq_2d), ...       % gq: 二次约束线性项
+                py.numpy.array(qp.uq'), ...      % uq: 二次约束右端
+                py.bool(false) ...              % verbose
             );
 
             % ========== 提取结果 ==========
-            x = double(result{'x'});           % (n_var,)
+            % x = [u(:); nu(:)] (36维), 论文决策变量 u ∈ R^{3×K}
+            x = double(result{'x'});           % (n_var,) = (36,)
             status_code = double(result{'status'});
             optval = double(result{'obj_value'});
             inner_solve_time = double(result{'solve_time'});
 
-            % 从 x 提取 u (前 3*K 个变量)
+            % 从 x 提取 u (前 3*K 个变量, 论文 u={u_1,...,u_K})
             u_sol = reshape(x(1:3*K), 3, K);
 
-            % HPIPM status: 0=SUCCESS, 其他=失败
+            % HPIPM status: 0=SUCCESS (对应论文 S(û) 存在唯一解)
             if status_code == 0
                 cvx_status_str = 'Solved';
             else
@@ -114,7 +129,7 @@ function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, sta
             solver_name = 'HPIPM';
 
         catch ME
-            % Python 调用失败
+            % Python 调用失败 (对应 Q_K 不可解的情况, 但论文 Prop.2 保证可行性)
             u_sol = zeros(3, K);
             status_code = -1;
             optval = NaN;
@@ -133,23 +148,26 @@ function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, sta
         diagnostics.iterations.solve_time(m) = inner_solve_time;
         diagnostics.iterations.solver_name{m} = solver_name;
 
-        % 打印结果
         fprintf('第%d步第%d次迭代 - %s内部求解时间：%.6f秒 (status=%d)\n', ...
             step, m, solver_name, inner_solve_time, status_code);
         fprintf('最优代价: %f | 求解状态: %s\n', optval, cvx_status_str);
 
-        % ========== 迭代更新 (无条件更新) ==========
+        % ========== 论文 Alg.1 line 9: 更新 m ← m+1 ==========
+        % 论文: u^(m+1) = S(u^(m)), 即 û ← u_sol 用于下次迭代凸化
         u = u_sol;
-        u_hat = u;
+        u_hat = u;  % 更新 û, 下次构造 Q_K 时使用
     end
 
-    % 输出状态导数
+    % ================= 论文 Alg.1 line 11: 输出 ν_1 = ν_0 + u_1 =================
+    % 论文 (1) 式: ξ̇_w = [R(ψ_w), 0; 0, 1] * ξ̇_c
+    % 这里 new_state_dot = R(ψ) * (ν_0 + k1*u_1), k1=1
     new_state_dot =  [cos(state(3)), -sin(state(3)), 0;
                      sin(state(3)),  cos(state(3)), 0;
                          0,              0, 1] * (state_dot + 1.00 * u(:, 1));
+    % 车体系速度 ν_1 = ν_0 + u_1 (论文 Alg.1 line 11)
     velocity = current_nu + u(:, 1);
 
-    % 汇总诊断
+    % 汇总诊断 (论文 IV-B: computation cost 记录)
     diagnostics.total_solve_time = sum(diagnostics.iterations.solve_time(~isnan( ...
         diagnostics.iterations.solve_time)));
     if isempty(diagnostics.total_solve_time)
