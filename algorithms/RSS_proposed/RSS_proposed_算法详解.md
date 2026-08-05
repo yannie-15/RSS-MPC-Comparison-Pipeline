@@ -2,6 +2,28 @@
 
 > 本文严格依据 `algorithms/RSS_proposed/` 下的实际代码编写，所有物理量、参数、矩阵构造均与代码一一对应。
 
+## 论文公式索引
+
+| 公式 | 出处 | 在代码中的对应 |
+|---|---|---|
+| (1) | RSS26 — 世界系状态导数 | `control_RSS.m` 输出 `new_state_dot = R(ψ)·(ν_0+k1·u_1)` |
+| (3) | RSS26 — 特征矩阵 H_n | `construct_complete_qp_from_rss.m` `H_cell{n}` |
+| (4) | RSS26 — 对齐条件 z_n=H_n·ν̇_c | 用于轮速 SOC 约束和转向锥约束 |
+| (9) | RSS26 — 离散化动力学 ν_{k+1}=ν_k+u_{k+1} | 等式约束 A·x=b (18 条) |
+| (11) | RSS26 — δ_ω=ω_max·τ | `delta_theta = dt*phidotmax = π/20` |
+| (12) | RSS26 — 原始双线性转向锥约束 (非凸) | 经 Prop.1 凸化后实现 |
+| (13) | RSS26 — 代入 z_n=H_n·ν_k 后的双线性形式 | 转向锥凸化约束 |
+| (15) | RSS26 — 凸化约束 C=A-B-L ≤ 0 | 转向锥二次约束 (48 条) |
+| (16) | RSS26 — A/B/L 定义 | 转向锥 Hq/gq/uq 填充 |
+| (17) | RSS26 — 凸子问题 Q_K(û) 目标 f=g+ρ‖u-û‖² | 代价函数 H/g 构造 |
+| (18) | RSS26 — 代价 g(u)=Σ e_k^T·Q·e_k + u_k^T·R·u_k | 位置+姿态+控制正则 |
+| (19) | RSS26 — 跟踪误差 e_k 的 SO(2) 一阶展开 | 位置/姿态误差展开 |
+| (20a) | RSS26 — 转向锥约束 (凸化后) | 转向锥二次约束 (48 条) |
+| (20b) | RSS26 — 轮速 SOC 约束 ‖H_n·ν_k‖≤vimax | 轮速二次约束 (24 条) |
+| (20c) | RSS26 — 等式约束集 (动力学) | 等式约束 A·x=b |
+| Alg.1 | RSS26 — Trajectory optimizer 算法 | `control_RSS.m` SQP 外层循环 |
+| (1) | HPIPM — 完整 dense QP (含 slack) | 本代码使用硬约束子集 (无 slack) |
+
 ---
 
 ## 1. 文件总览
@@ -88,6 +110,21 @@ function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, sta
 
 ### 3.2 SQP 外层循环（对应论文 Algorithm 1）
 
+**论文 Algorithm 1 (Trajectory optimizer for SWMRs)**：
+```
+1: Initialize u^(0) ∈ ri(D(P_K))    % static init: u^(0) = 0
+2: m ← 0
+3: while m < max_iter
+4:   Construct convex subproblem Q_K(u^(m))    % 公式 (17)
+5:   Solve u^(m+1) = S(u^(m))                   % 凸求解器
+6:   if ||u^(m+1) - u^(m)|| < ε: break
+7:   m ← m + 1
+8: end while
+9:   u_hat ← u^(m+1)                            % 无条件更新
+10: end
+11: return ν_1 = ν_0 + k1·u_1                    % 输出
+```
+
 ```matlab
 max_iter = 3;
 u_hat = zeros(3, K);  % static init: u^(0) = 0
@@ -121,6 +158,14 @@ end
 ```
 
 ### 3.3 输出（对应论文 Alg.1 line 11: ν_1 = ν_0 + u_1）
+
+**论文公式 (1)** — 世界系状态导数：
+```
+ξ̇_w = [R(ψ_w), 0; 0, 1] · ξ̇_c
+```
+其中 `R(ψ_w)` 为 2D 旋转矩阵，`ξ̇_c = ν_0 + k1·u_1` 为车体系速度（论文 (8)）。
+
+**论文 Alg.1 line 11**：`ν_1 = ν_0 + k1·u_1`（代码中 `k1=1` 硬编码）
 
 ```matlab
 new_state_dot = [cos(psi), -sin(psi), 0;
@@ -166,6 +211,16 @@ function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, sta
 
 #### 4.2.1 特征矩阵 H_n（2×3）
 
+**论文公式 (3)** — 第 n 个轮子的特征矩阵：
+```
+H_n = [1, 0, -dy_n; 0, 1, dx_n]
+```
+
+**论文公式 (4)** — 对齐条件（z_n 为轮子平面投影的车体速度）：
+```
+z_n = H_n · ν̇_c
+```
+
 ```matlab
 for n = 1:num_wheels
     H_cell{n} = [1, 0, -wheel_pos(n, 2);   % -dy_n
@@ -183,6 +238,11 @@ R_psi0 = [cos(psi0), -sin(psi0); sin(psi0), cos(psi0)];
 
 #### 4.2.3 δ_ω
 
+**论文公式 (11)** — 单步最大转向角变化：
+```
+δ_ω = ω_max · τ
+```
+
 ```matlab
 delta_theta = dt * phidotmax;  % = 0.01 * 5π = π/20
 ```
@@ -193,9 +253,28 @@ delta_theta = dt * phidotmax;  % = 0.01 * 5π = π/20
 
 目标函数形式：`0.5·x'Hx + g'x + const`
 
+**论文公式 (17)** — 凸子问题 Q_K(û) 的目标函数：
+```
+f(u, û) = g(u) + ρ · ||u - û||²
+```
+
+**论文公式 (18)** — 代价函数 g(u)：
+```
+g(u) = Σ_{k=1}^K [ e_k^T Q e_k + u_k^T R u_k ]
+```
+其中 Q = diag(30, 30, 1)（位置 30，姿态 1），R = diag(0.3, 0.3, 0.3)（控制正则），e_k 为跟踪误差。
+
+**论文公式 (19)** — 跟踪误差 e_k 的 SO(2) 一阶展开：
+```
+e_k = ξ_w(t0) + [R(ψ_w(t0)), 0; 0, 1] · Σ_{l=0}^{k-1} ν_l · τ - ξ^k_r + O(τ²)
+```
+其中 O(τ²) 为高阶余项，τ=0.01s 时为 1e-4，代码中略去。
+
 由 4 部分代价累加而成：
 
 #### 4.3.1 位置跟踪代价（k=2..K）
+
+**论文公式 (18) 第一项位置部分** + **论文公式 (19) 位置展开**：
 
 跟踪误差的一阶展开（略去 O(τ²)）：
 ```
@@ -238,6 +317,8 @@ end
 
 #### 4.3.2 姿态跟踪代价（k=1..K）
 
+**论文公式 (18) 第一项姿态部分** + **论文公式 (19) 姿态展开**：
+
 姿态误差：`psi(k) - ref_psi_k`，其中
 ```
 psi(k) = ψ0 + current_nu(3)·dt + dt·Σ_{j=1}^{k-1} nu(3,j)
@@ -270,6 +351,11 @@ end
 
 #### 4.3.3 控制正则化（k=1..K）
 
+**论文公式 (18) 第二项** — 控制能量正则化：
+```
+u_k^T R u_k,   R = diag(0.3, 0.3, 0.3)
+```
+
 ```matlab
 for k = 1:K
     for i = 1:3
@@ -282,6 +368,11 @@ end
 代价 `w_control·||u||² = w_control·Σ u(i,k)²`，对每个对角元贡献 `2·w_control`。
 
 #### 4.3.4 RSS 强凸正则化（k=1..K）
+
+**论文公式 (17) 第二项** — 强凸正则化：
+```
+ρ · ||u - û||²    (提供强凸性, 保证 S(û) 唯一解, 论文 Theorem 1)
+```
 
 `ρ·||u - û||² = ρ·(||u||² - 2·u^T·û + ||û||²)`
 
@@ -309,6 +400,16 @@ objective_constant = Σ_{k=2}^K w_pos·||c_k||² + Σ_{k=1}^K w_psi·psi_c_k² +
 ---
 
 ### 4.4 等式约束 A·x = b（动力学递推，共 18 条）
+
+**论文公式 (9)** — 离散化动力学（车体系速度递推）：
+```
+ν_{k+1} = ν_k + u_{k+1},   k = 0, 1, ..., K-1
+```
+
+**论文公式 (20c)** — 等式约束集（包含在 Q_K 中）：
+```
+u ∈ {u : ν_{k+1} = ν_k + u_{k+1}}
+```
 
 动力学：`ν_{k+1} = ν_k + u_{k+1}`
 
@@ -350,7 +451,18 @@ end
 
 QCQP 形式：`0.5·x'Hq_i·x + gq_i'·x ≤ uq_i`
 
+**论文公式 (20a)** — 转向锥约束（凸化后）+ **论文公式 (20b)** — 轮速 SOC 约束：
+```
+(20a): C^k_{i,n}(u, û) ≤ 0     (转向锥, 凸化后)
+(20b): ||H_n · ν_k|| ≤ vimax   (轮速, 原本就是凸的)
+```
+
 #### 4.5.1 轮速 SOC 约束（4×K = 24 条）
+
+**论文公式 (20b)** — 轮速约束：
+```
+||H_n · ν_k|| ≤ vimax,   ∀n ∈ {1,...,N}, k ∈ {1,...,K}
+```
 
 `||H_n·ν_k|| ≤ vimax` → `ν_k^T·M_n·ν_k ≤ vimax²`
 
@@ -372,6 +484,29 @@ end
 
 #### 4.5.2 转向锥凸化约束（2×4×K = 48 条）
 
+**论文公式 (12)** — 原始双线性转向锥约束（非凸）：
+```
+(R_i · z_n(t_k))^T · z_n(t_{k+1}) ≥ 0,   i ∈ {1, 2}
+R_1 = R(π/2 - δ_ω),   R_2 = R_1^T
+```
+
+**论文公式 (13)** — 代入 z_n = H_n·ν_k（论文 (4)）后：
+```
+ν_{k-1}^T · H_n^T · R_i^T · H_n · (ν_{k-1} + u_k) ≥ 0   (非凸双线性)
+```
+
+**论文公式 (15)** — Proposition 1 凸化后的约束：
+```
+C^k_{i,n}(u, û) = A^k_{i,n}(u) - B^k_{i,n}(û) - L^k_{i,n}(u, û) ≤ 0
+```
+
+**论文公式 (16)** — A, B, L 定义：
+```
+A^k_{i,n}(u) = 1/2 · ||H_n·ν_{k-1}||² + 1/2 · ||H_n·(ν_{k-1}+u_k)||²   (凸, 关于 u)
+B^k_{i,n}(û) = 1/2 · ||(I+R_i)·H_n·ν̂_{k-1} + R_i·H_n·û_k||²            (常数, 在 û 处)
+L^k_{i,n}(u, û) = ∇_u B|_û · (u - û)                                    (B 的一阶展开, 线性)
+```
+
 两组旋转矩阵：
 ```matlab
 R1 = [sin(delta_theta), -cos(delta_theta); cos(delta_theta),  sin(delta_theta)];  % R(π/2-δ_ω)
@@ -387,9 +522,16 @@ for k = 1:K-1
 end
 ```
 
-子函数 `add_steering_cone_constraints` 对每个 (k, n) 构造一条约束。约束形式：
+子函数 `add_steering_cone_constraints` 对每个 (k, n) 构造一条约束。约束形式（**论文公式 (15)**）：
 ```
 C^k_{i,n}(u, û) = A(u) - B(û) - L(u, û) ≤ 0
+```
+
+其中 A/B/L 由 **论文公式 (16)** 定义：
+```
+A(u) = 1/2·||H_n·ν_{k-1}||² + 1/2·||H_n·(ν_{k-1}+u_k)||²          (二次, 凸)
+B(û) = 1/2·||(I+R_i)·H_n·ν̂_{k-1} + R_i·H_n·û_k||²                  (常数, 在 û 处)
+L(u, û) = ∇_u B|_û · (u - û)                                         (线性, B 的一阶展开)
 ```
 
 ##### k > 1 情况（ν_{k-1} 是决策变量）
@@ -487,6 +629,28 @@ qp_problem.objective_constant = objective_constant;
 
 ## 5. `hpipm_qp_solver.py` — Python 求解器封装
 
+**HPIPM 论文**（arXiv:2003.02547）Section 2.1 公式 (1) — 完整 dense QP 形式：
+```
+min_{v,s}  1/2 [v;1]^T [H  g; g^T  0] [v;1]
+          + 1/2 [s^l;s^u;1]^T [Z^l  0  z^l; 0  Z^u  z^u; (z^l)^T (z^u)^T  0] [s^l;s^u;1]
+s.t. A v = b                                                              (等式)
+     [v_; d_] ≤ [J^{b,v}; C] v + [J^{s,v}; J^{s,g}] s^l                  (下界+slack)
+     [J^{b,v}; C] v - [J^{s,v}; J^{s,g}] s^u ≤ [v^; d^]                  (上界+slack)
+     s^l ≥ s^l_lb,  s^u ≥ s^u_lb                                          (slack 非负)
+```
+
+**dense QCQP 扩展** — 在 dense QP 基础上增加二次约束：
+```
+0.5 v^T Hq_i v + gq_i^T v ≤ uq_i   (二次不等式, 亦可带 slack)
+```
+
+**本代码使用硬约束子集**（`nb=0, ng=0, ns=0, 无 slack`）：
+```
+min  0.5 x^T H x + g^T x
+s.t. A x = b                                  (等式, 论文 (20c) 动力学)
+     0.5 x^T Hq_i x + gq_i^T x ≤ uq_i         (二次不等式, 论文 (20a)+(20b))
+```
+
 ### 5.1 接口
 
 ```python
@@ -500,16 +664,22 @@ def solve_qcqp(H, g, A, b, Hq, gq, uq, verbose=False) -> dict
 
 ### 5.2 HPIPM 维度设置
 
+对应 **HPIPM 论文 Section II-B** 的数据结构（维度对象）：
+
 ```python
 dim = hpipm_dense_qcqp_dim()
-dim.set('nv', n)    # 36
-dim.set('ne', ne)   # 18
-dim.set('nb', 0)    # 无 box 约束
-dim.set('ng', 0)    # 无一般线性约束
-dim.set('nq', nq)   # 72
+dim.set('nv', n)    # 36  (决策变量数)
+dim.set('ne', ne)   # 18  (等式约束数)
+dim.set('nb', 0)    # 0   (box bounds, 未启用)
+dim.set('ng', 0)    # 0   (一般线性约束, 未启用)
+dim.set('nq', nq)   # 72  (二次约束数)
 ```
 
 ### 5.3 求解流程
+
+对应 **HPIPM 论文 Section III** — 求解器模式：
+- `balance`：平衡模式（默认，平衡速度与鲁棒性）
+- `robust`：鲁棒模式（更稳定但更慢，balance 失败时回退）
 
 ```python
 # balance 模式 (默认)
@@ -523,7 +693,7 @@ arg.set('tol_comp', 1e-6)
 solver = hpipm_dense_qcqp_solver(dim, arg)
 solver.solve(qcqp, qcqp_sol)
 x = qcqp_sol.get('v').flatten()
-status = int(solver.get('status'))  # 0=SUCCESS
+status = int(solver.get('status'))  # 0=SUCCESS (HPIPM 论文 Table I)
 
 # balance 失败时回退到 robust 模式
 if status != 0:
