@@ -1,0 +1,3 @@
+[submodule "third_party/blasfeo"]
+	path = third_party/blasfeo
+	url = https://github.com/giaf/blasfeo.git

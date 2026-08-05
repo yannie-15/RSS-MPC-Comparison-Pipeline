@@ -18,7 +18,6 @@ Thumbs.db
 results/batch/
 paper_reproduction/results/
 verification/results/
-scenario_bank/*.mat
 
 # 临时参考仓库
 temp_reference_repo/
