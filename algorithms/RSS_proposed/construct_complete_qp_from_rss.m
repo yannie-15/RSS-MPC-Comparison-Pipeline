@@ -16,13 +16,6 @@ function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, sta
 %   u(i,k) 的全局索引 = (k-1)*3 + i         (i=1,2,3; k=1,...,K)
 %   nu(i,k) 的全局索引 = nu_start + (k-1)*3 + (i-1)
 %   其中 nu_start = 3*K + 1
-%
-% 修复记录:
-%   [Bug1] nu索引从 +1/+2/+3 改为 +0/+1/+2 (0-based偏移)
-%   [Bug2] 加入跨预测阶段的Hessian交叉项
-%   [Bug3] 位置代价常数部分加入 current_nu(1:2)*dt 位移
-%   [Bug4] Hessian系数改为 2*w*dt^2 (0.5*x'Hx形式)
-%   [Bug5] 等式约束递推段索引从 +i 改为 +(i-1)
 
     %% =====================================================
     % 参数提取
@@ -39,7 +32,7 @@ function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, sta
     psi0 = state(3);
     R_psi0 = [cos(psi0), -sin(psi0); sin(psi0), cos(psi0)];
 
-    % 代价函数权重 (与 control_RSS.m / control_RSS_v2.m CVX分支完全一致)
+    % 代价函数权重
     w_pos = 30;
     w_psi = 1;        % k1 in original
     w_control = 0.3;
@@ -74,19 +67,16 @@ function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, sta
     %% =====================================================
     % 1. Hessian矩阵 H 和一次项 g (代价函数)
     % ======================================================
-    % 目标函数: 0.5*x'*H*x + g'*x 应等价于 CVX 中的
+    % 目标函数: 0.5*x'*H*x + g'*x
     %   J_pos + J_psi + w_control*||u||^2 + rho*||u-u_hat||^2
     %
-    % CVX 的 sum_square(v) = ||v||^2 = v'*v
-    % 在 0.5*x'Hx 形式中: ||v||^2 = 0.5*x'*(2*A)'*...
-    % 所以 Hessian 系数需要乘 2 才能匹配 0.5*x'Hx 形式
+    % ||v||^2 = v'*v, 在 0.5*x'Hx 形式中 Hessian 系数需乘 2
 
     H_mat = zeros(n_var, n_var);
     g_vec = zeros(n_var, 1);
 
     % 1.1 位置跟踪代价: sum_{k=2}^{K} w_pos * ||position_error_k||^2
     %
-    % CVX 表达式:
     %   NU(:,1) = current_nu(1:2)*dt;                (常数，不含nu变量)
     %   NU(:,k) = current_nu(1:2)*dt + dt*sum_{j=1}^{k-1} nu(1:2,j)   (k>=2)
     %   position_error_k = current_xy - ref_xy_k + R_psi0*NU(:,k)
@@ -116,7 +106,7 @@ function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, sta
         ref_idx = min(size(path, 2), step + k);
         ref_xy = path(1:2, ref_idx);
 
-        % [Bug3修复] 常数部分必须包含 current_nu(1:2)*dt 产生的位移
+        % 常数部分包含 current_nu(1:2)*dt 产生的位移
         c_k = current_xy - ref_xy + R_psi0 * current_nu(1:2) * dt;
 
         % 计算 R_psi0' * c_k (梯度方向)
@@ -125,10 +115,10 @@ function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, sta
         % NU(:,k) 依赖于 nu(1:2, 1:k-1)
         for i = 1:k-1
             for j = 1:k-1
-                % [Bug2+Bug4修复] 加入所有跨阶段交叉项，系数 = 2*w_pos*dt^2
-                nu_x_i = nu_start + (i-1)*3;       % [Bug1修复] 偏移0，不是1
+                % 加入所有跨阶段交叉项，系数 = 2*w_pos*dt^2
+                nu_x_i = nu_start + (i-1)*3;       % 偏移0
                 nu_x_j = nu_start + (j-1)*3;
-                nu_y_i = nu_start + (i-1)*3 + 1;   % [Bug1修复] 偏移1，不是2
+                nu_y_i = nu_start + (i-1)*3 + 1;   % 偏移1
                 nu_y_j = nu_start + (j-1)*3 + 1;
 
                 H_mat(nu_x_i, nu_x_j) = H_mat(nu_x_i, nu_x_j) + 2 * w_pos * dt^2;
@@ -148,7 +138,6 @@ function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, sta
 
     % 1.2 姿态跟踪代价: sum_{k=1}^{K} w_psi * (psi_k - ref_psi_k)^2
     %
-    % CVX 表达式:
     %   psi(1) = psi0 + current_nu(3)*dt;          (常数，不含nu变量)
     %   psi(k) = psi0 + current_nu(3)*dt + dt*sum_{j=1}^{k-1} nu(3,j)  (k>=2)
     %
@@ -175,8 +164,8 @@ function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, sta
 
         for i = 1:k-1
             for j = 1:k-1
-                % [Bug2+Bug4修复] 加入所有跨阶段交叉项
-                nu_psi_i = nu_start + (i-1)*3 + 2;  % [Bug1修复] 偏移2，不是3
+                % 加入所有跨阶段交叉项
+                nu_psi_i = nu_start + (i-1)*3 + 2;  % 偏移2
                 nu_psi_j = nu_start + (j-1)*3 + 2;
 
                 H_mat(nu_psi_i, nu_psi_j) = H_mat(nu_psi_i, nu_psi_j) + 2 * w_psi * dt^2;
@@ -217,7 +206,7 @@ function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, sta
     %% =====================================================
     % 1.5 目标函数常数项 objective_constant
     % ======================================================
-    % 完整 CVX 目标: J = 0.5*x'*H*x + g'*x + c
+    % 完整目标: J = 0.5*x'*H*x + g'*x + c
     % 其中 c 与决策变量无关，不影响最优解，但影响 objective value 的数值比较。
     %
     % c 包含三部分:
@@ -275,7 +264,7 @@ function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, sta
     for k = 1:K-1
         for i = 1:3
             u_idx = k*3 + i;
-            % [Bug5修复] nu(i,k) = nu_start + (k-1)*3 + (i-1), 不是 +(i)
+            % nu(i,k) = nu_start + (k-1)*3 + (i-1)
             nu_k_idx = nu_start + (k-1)*3 + i - 1;
             nu_kp1_idx = nu_start + k*3 + i - 1;
 

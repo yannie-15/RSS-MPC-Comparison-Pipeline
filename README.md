@@ -264,7 +264,7 @@ control_RSS.m
   1. 加载参数（`K=6, rho=0.01, k1=1, max_iter=3`）
   2. 初始化 Python 环境（`persistent` 变量保证只设置一次 `sys.path` 与一次 `importlib.reload`）
   3. SQP 外层循环 3 次迭代：每次调用 `construct_complete_qp_from_rss` 构造 QP → 调用 `py.hpipm_qp_solver.solve_qcqp` 求解
-  4. **关键策略**：无论求解成功失败都更新 `u_hat = u_sol`，不 break、不回退（与原始 CVX 0121 分支完全一致）
+  4. **关键策略**：无论求解成功失败都更新 `u_hat = u_sol`，不 break、不回退
   5. 输出控制增量 `u`、世界系状态导数、车体系速度、诊断结构体
 
 #### `construct_complete_qp_from_rss.m` — QP 矩阵构造
@@ -279,12 +279,6 @@ control_RSS.m
   - **二次约束** `0.5·x'Hq_i·x + gq_i'·x ≤ uq_i`：
     - 轮速 SOC 约束（4×K=24 条）
     - 转向锥凸化约束（两组 R 矩阵，2×4×K=48 条）
-- **Bug 修复记录**（5 个索引/系数 Bug，与原 CVX 公式对齐）：
-  - Bug1：nu 索引偏移从 +1/+2/+3 改为 +0/+1/+2
-  - Bug2：加入跨预测阶段的 Hessian 交叉项
-  - Bug3：位置代价常数部分加入 `current_nu(1:2)·dt` 位移
-  - Bug4：Hessian 系数改为 `2·w·dt²`（适配 `0.5·x'Hx` 形式）
-  - Bug5：等式约束递推段索引从 `+i` 改为 `+(i-1)`
 - **返回**：结构体 `qp`（含 H, g, A, b, Hq cell, gq cell, uq, 元数据）
 
 #### `hpipm_qp_solver.py` — Python 求解器封装
@@ -319,8 +313,8 @@ control_RSS.m
 
 ### 关键设计点
 
-1. **MATLAB + Python 分工**：MATLAB 负责构造 QP 矩阵（修复 Bug1-5）与 SQP 外层循环；Python 仅负责求解（`balance` + `robust` 回退）
-2. **SQP 无条件更新**：与原始 CVX 0121 分支一致，无论成功失败都更新 `u_hat`，不 break、不回退
-3. **k1=1 硬编码**：`control_RSS.m` 第 25 行 `k1=1`，覆盖 `config.m` 中的 `params.k1=0.15`，匹配原 CVX 0121 分支行为
+1. **MATLAB + Python 分工**：MATLAB 负责构造 QP 矩阵与 SQP 外层循环；Python 仅负责求解（`balance` + `robust` 回退）
+2. **SQP 无条件更新**：无论成功失败都更新 `u_hat`，不 break、不回退
+3. **k1=1 硬编码**：`control_RSS.m` 第 25 行 `k1=1`，覆盖 `config.m` 中的 `params.k1=0.15`
 4. **persistent 环境初始化**：避免每次调用都重新加载 Python 模块，防止 `libhpipm.dll` 内存泄漏（曾导致 WinError 8）
 5. **DLL 路径自动设置**：`hpipm_qp_solver.py` 在 import 时自动通过 `os.add_dll_directory` 添加 `third_party/hpipm/lib/` 到搜索路径

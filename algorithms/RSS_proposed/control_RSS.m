@@ -1,9 +1,9 @@
 function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, state_dot, state)
 % CONTROL_RSS  RSS proposed 算法控制器 (HPIPM dense QCQP, 3 次 SQP 迭代)
 %
-% 架构 (与参考仓库一致):
+% 架构:
 %   1. MATLAB 端调用 construct_complete_qp_from_rss 构造 QP 矩阵
-%      (H, g, A, b, Hq, gq, uq), 修复了 Bug1-5
+%      (H, g, A, b, Hq, gq, uq)
 %   2. Python 端 hpipm_qp_solver.solve_qcqp 仅负责求解
 %   3. SQP 外层循环 (max_iter=3) 保留在 MATLAB 端
 %
@@ -22,7 +22,7 @@ function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, sta
     params = config();
 
     % ================= Param Setup =================
-    K = 6; rho = 0.01; k1 = 1; epsilon = 0;  % k1=1 硬编码, 匹配原始 CVX 0121 分支
+    K = 6; rho = 0.01; k1 = 1; epsilon = 0;  % k1=1 硬编码
     current_xy = [state(1), state(2)]';
     psi0 = state(3); current_nu = state_dot;
 
@@ -67,10 +67,10 @@ function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, sta
     end
 
     % ================= SQP 外层循环 =================
-    % 与原始 CVX 0121 分支对齐: 无论成功失败都更新 u_hat, 不 break, 不回退
+    % 无论成功失败都更新 u_hat, 不 break, 不回退
     for m = 1 : max_iter
         try
-            % ========== MATLAB 端构造 QP (使用参考仓库验证过的代码) ==========
+            % ========== MATLAB 端构造 QP ==========
             qp = construct_complete_qp_from_rss(path, step, current_nu, state, u_hat, params);
 
             % ========== 把 Hq/gq cell 数组转为 numpy 数组 ==========
@@ -138,7 +138,7 @@ function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, sta
             step, m, solver_name, inner_solve_time, status_code);
         fprintf('最优代价: %f | 求解状态: %s\n', optval, cvx_status_str);
 
-        % ========== 迭代更新 (与原始 CVX 0121 一致: 无条件更新) ==========
+        % ========== 迭代更新 (无条件更新) ==========
         u = u_sol;
         u_hat = u;
     end
