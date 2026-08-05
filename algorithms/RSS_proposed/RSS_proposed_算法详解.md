@@ -6,21 +6,21 @@
 
 | 公式 | 出处 | 在代码中的对应 |
 |---|---|---|
-| (1) | RSS26 — 世界系状态导数 ξ̇_w=[R(ψ_w),0;0,1]·ξ̇_c | `control_RSS.m` 输出 `new_state_dot = R(ψ)·(ν_0+k1·u_1)`，其中 `state_dot+u_1` = ξ̇_c（车体系），`new_state_dot` = ξ̇_w（世界系） |
+| (1) | RSS26 — 车体系->世界系变换 | `control_RSS.m` 输出 `new_state_dot = R(psi)*(state_dot + k1*u(:,1))`，其中 `state_dot+u(:,1)` 是车体系速度，`new_state_dot` 是世界系状态导数 |
 | (3) | RSS26 — 特征矩阵 H_n | `construct_complete_qp_from_rss.m` `H_cell{n}` |
-| (4) | RSS26 — 对齐条件 z_n=H_n·ν̇_c | 用于轮速 SOC 约束和转向锥约束 |
-| (9) | RSS26 — 离散化动力学 ν_{k+1}=ν_k+u_{k+1} | 等式约束 A·x=b (18 条) |
-| (11) | RSS26 — δ_ω=ω_max·τ | `delta_theta = dt*phidotmax = π/20` |
+| (4) | RSS26 — 对齐条件 z_n=H_n*nu | 用于轮速 SOC 约束和转向锥约束 |
+| (9) | RSS26 — 离散化动力学 nu(:,k+1)=nu(:,k)+u(:,k+1) | 等式约束 A*x=b (18 条) |
+| (11) | RSS26 — delta_theta=phidotmax*dt | `delta_theta = dt*phidotmax = pi/20` |
 | (12) | RSS26 — 原始双线性转向锥约束 (非凸) | 经 Prop.1 凸化后实现 |
-| (13) | RSS26 — 代入 z_n=H_n·ν_k 后的双线性形式 | 转向锥凸化约束 |
-| (15) | RSS26 — 凸化约束 C=A-B-L ≤ 0 | 转向锥二次约束 (48 条) |
+| (13) | RSS26 — 代入 z_n=H_n*nu(:,k) 后的双线性形式 | 转向锥凸化约束 |
+| (15) | RSS26 — 凸化约束 C=A-B-L <= 0 | 转向锥二次约束 (48 条) |
 | (16) | RSS26 — A/B/L 定义 | 转向锥 Hq/gq/uq 填充 |
-| (17) | RSS26 — 凸子问题 Q_K(û) 目标 f=g+ρ‖u-û‖² | 代价函数 H/g 构造 |
-| (18) | RSS26 — 代价 g(u)=Σ e_k^T·Q·e_k + u_k^T·R·u_k | 位置+姿态+控制正则 |
+| (17) | RSS26 — 凸子问题 Q_K(u_hat) 目标 f=g+rho*||u-u_hat||^2 | 代价函数 H/g 构造 |
+| (18) | RSS26 — 代价 g(u)=sum e_k'*Q*e_k + u_k'*R*u_k | 位置+姿态+控制正则 |
 | (19) | RSS26 — 跟踪误差 e_k 的 SO(2) 一阶展开 | 位置/姿态误差展开 |
 | (20a) | RSS26 — 转向锥约束 (凸化后) | 转向锥二次约束 (48 条) |
-| (20b) | RSS26 — 轮速 SOC 约束 ‖H_n·ν_k‖≤vimax | 轮速二次约束 (24 条) |
-| (20c) | RSS26 — 等式约束集 (动力学) | 等式约束 A·x=b |
+| (20b) | RSS26 — 轮速 SOC 约束 ||H_n*nu(:,k)||<=vimax | 轮速二次约束 (24 条) |
+| (20c) | RSS26 — 等式约束集 (动力学) | 等式约束 A*x=b |
 | Alg.1 | RSS26 — Trajectory optimizer 算法 | `control_RSS.m` SQP 外层循环 |
 | (1) | HPIPM — 完整 dense QP (含 slack) | 本代码使用硬约束子集 (无 slack) |
 
@@ -61,7 +61,7 @@
 | 代码变量 | 代码值 | 含义 |
 |---|---|---|
 | `K` | `6` | 预测时域长度 |
-| `rho` | `0.01` | 强凸正则化参数 ρ |
+| `rho` | `0.01` | 强凸正则化参数 rho |
 | `k1` | `1` | 输出增益（**硬编码为 1**，覆盖 `config.m` 中的 `0.15`） |
 | `epsilon` | `0` | 收敛阈值（未启用，固定跑满迭代） |
 | `max_iter` | `3` | SQP 最大迭代次数 |
@@ -79,11 +79,11 @@
 
 | 代码变量 | 计算式 | 值 |
 |---|---|---|
-| `delta_theta` | `dt * phidotmax` | `0.01 * 5π = π/20 ≈ 0.1571` rad |
+| `delta_theta` | `dt * phidotmax` | `0.01 * 5*pi = pi/20 ~= 0.1571` rad |
 | `num_wheels` | `size(wheel_pos, 1)` | `4` |
 | `n_var` | `6*K` | `36`（u 18 维 + nu 18 维） |
 | `nu_start` | `3*K + 1` | `19`（nu 在 x 中的起始索引） |
-| `n_eq` | `3*K` | `18`（3 初始 + 3·(K-1) 递推） |
+| `n_eq` | `3*K` | `18`（3 初始 + 3*(K-1) 递推） |
 | 二次约束总数 | `4*K + 2*4*K` | `24 + 48 = 72` |
 
 ### 2.5 决策变量排列
@@ -92,8 +92,8 @@
 x = [u(:); nu(:)]  (36维)
 ```
 
-- `u(i,k)` 全局索引 = `(k-1)*3 + i`，i=1,2,3，k=1..K → 占索引 1..18
-- `nu(i,k)` 全局索引 = `nu_start + (k-1)*3 + (i-1)` = `18 + (k-1)*3 + i` → 占索引 19..36
+- `u(i,k)` 全局索引 = `(k-1)*3 + i`，i=1,2,3，k=1..K -> 占索引 1..18
+- `nu(i,k)` 全局索引 = `nu_start + (k-1)*3 + (i-1)` = `18 + (k-1)*3 + i` -> 占索引 19..36
 
 ---
 
@@ -105,24 +105,24 @@ x = [u(:); nu(:)]  (36维)
 function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, state_dot, state)
 ```
 
-- 输入：参考轨迹 `path`、当前步 `step`、当前车体系速度 `state_dot`(=ν_0)、当前位姿 `state`(=ξ_w)
+- 输入：参考轨迹 `path`、当前步 `step`、当前车体系速度 `state_dot`（即 `current_nu`）、当前位姿 `state`
 - 输出：控制增量序列 `u`、世界系状态导数 `new_state_dot`、车体系速度 `velocity`、诊断 `diagnostics`
 
 ### 3.2 SQP 外层循环（对应论文 Algorithm 1）
 
 **论文 Algorithm 1 (Trajectory optimizer for SWMRs)**：
 ```
-1: Initialize u^(0) ∈ ri(D(P_K))    % static init: u^(0) = 0
-2: m ← 0
+1: Initialize u^(0) in ri(D(P_K))    % static init: u_hat = zeros(3, K)
+2: m <- 0
 3: while m < max_iter
 4:   Construct convex subproblem Q_K(u^(m))    % 公式 (17)
 5:   Solve u^(m+1) = S(u^(m))                   % 凸求解器
-6:   if ||u^(m+1) - u^(m)|| < ε: break
-7:   m ← m + 1
+6:   if ||u^(m+1) - u^(m)|| < epsilon: break
+7:   m <- m + 1
 8: end while
-9:   u_hat ← u^(m+1)                            % 无条件更新
+9:   u_hat <- u^(m+1)                            % 无条件更新
 10: end
-11: return ν_1 = ν_0 + k1·u_1                    % 输出
+11: return velocity = state_dot + k1 * u(:,1)   % 输出 (k1=1 硬编码)
 ```
 
 ```matlab
@@ -133,7 +133,7 @@ for m = 1 : max_iter
     % 1. 构造凸子问题 Q_K(u^(m))
     qp = construct_complete_qp_from_rss(path, step, current_nu, state, u_hat, params);
 
-    % 2. 数据格式转换: cell → 3D numpy
+    % 2. 数据格式转换: cell -> 3D numpy
     Hq_3d = zeros(n_var, n_var, n_qcqp);
     gq_2d = zeros(n_var, n_qcqp);
     for i = 1:n_qcqp
@@ -157,18 +157,19 @@ for m = 1 : max_iter
 end
 ```
 
-### 3.3 输出（对应论文 Alg.1 line 11: ν_1 = ν_0 + u_1）
+### 3.3 输出（对应论文 Alg.1 line 11: velocity = state_dot + k1*u(:,1)）
 
-**论文公式 (1)** — 世界系状态导数（车体系 → 世界系）：
+**论文公式 (1)** — 车体系 -> 世界系变换：
 ```
-ξ̇_w = [R(ψ_w), 0; 0, 1] · ξ̇_c
+new_state_dot = [R(psi), 0; 0, 1] * (state_dot + k1 * u(:,1))
 ```
 其中：
-- `ξ̇_c` = 车体系速度 = `ν_0 + k1·u_1`（论文 (8) + Alg.1 line 11）
-- `R(ψ_w)` = 2D 旋转矩阵
-- 代码中 `state_dot` 是输入的 ν_0（车体系），`new_state_dot` 是输出的 ξ̇_w（世界系）
+- `state_dot` = 输入的当前车体系速度（即 `current_nu`）
+- `state_dot + k1*u(:,1)` = 输出车体系速度 `velocity`（论文 Alg.1 line 11）
+- `R(psi)` = 2D 旋转矩阵（由 `state(3)` 构造）
+- `new_state_dot` = 输出的世界系状态导数
 
-**论文 Alg.1 line 11**：`ν_1 = ν_0 + k1·u_1`（代码中 `k1=1` 硬编码）
+**论文 Alg.1 line 11**：`velocity = state_dot + k1*u(:,1)`（代码中 `k1=1` 硬编码）
 
 ```matlab
 new_state_dot = [cos(psi), -sin(psi), 0;
@@ -177,7 +178,7 @@ new_state_dot = [cos(psi), -sin(psi), 0;
 velocity = current_nu + u(:, 1);
 ```
 
-注意 `k1=1`（硬编码）。`state_dot + 1·u(:,1)` = `ν_0 + u_1` = `ν_1`（车体系），再经旋转矩阵 `R(ψ)` 旋到世界系得到 `new_state_dot` = ξ̇_w。`velocity` 直接输出车体系速度 ν_1。
+注意 `k1=1`（硬编码）。`state_dot + 1*u(:,1)` 即车体系速度 `velocity`，再经旋转矩阵 `R(psi)` 旋到世界系得到 `new_state_dot`。
 
 ### 3.4 Python 环境管理
 
@@ -207,7 +208,7 @@ end
 function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, state, u_hat, params)
 ```
 
-- 输入：参考轨迹、当前步、当前车体速度 ν_0、当前位姿、上次迭代解 û、参数
+- 输入：参考轨迹、当前步、当前车体速度 `current_nu`、当前位姿、上次迭代解 `u_hat`、参数
 - 输出：`qp_problem` 结构体，含 `H, g, A, b, C(空), d(空), lb(空), ub(空), Hq(cell), gq(cell), uq, n_var, K, n_eq, n_qcqp, objective_constant`
 
 ### 4.2 预备量
@@ -221,7 +222,7 @@ H_n = [1, 0, -dy_n; 0, 1, dx_n]
 
 **论文公式 (4)** — 对齐条件（z_n 为轮子平面投影的车体速度）：
 ```
-z_n = H_n · ν̇_c
+z_n = H_n * nu
 ```
 
 ```matlab
@@ -233,45 +234,45 @@ end
 
 M_n = H_n' * H_n（3×3），用于轮速二次约束。
 
-#### 4.2.2 旋转矩阵 R(ψ_0)
+#### 4.2.2 旋转矩阵 R(psi0)
 
 ```matlab
 R_psi0 = [cos(psi0), -sin(psi0); sin(psi0), cos(psi0)];
 ```
 
-#### 4.2.3 δ_ω
+#### 4.2.3 delta_theta
 
 **论文公式 (11)** — 单步最大转向角变化：
 ```
-δ_ω = ω_max · τ
+delta_theta = phidotmax * dt
 ```
 
 ```matlab
-delta_theta = dt * phidotmax;  % = 0.01 * 5π = π/20
+delta_theta = dt * phidotmax;  % = 0.01 * 5*pi = pi/20
 ```
 
 ---
 
 ### 4.3 目标函数 H, g 构造
 
-目标函数形式：`0.5·x'Hx + g'x + const`
+目标函数形式：`0.5*x'*H*x + g'*x + const`
 
-**论文公式 (17)** — 凸子问题 Q_K(û) 的目标函数：
+**论文公式 (17)** — 凸子问题 Q_K(u_hat) 的目标函数：
 ```
-f(u, û) = g(u) + ρ · ||u - û||²
+f(u, u_hat) = g(u) + rho * ||u - u_hat||^2
 ```
 
 **论文公式 (18)** — 代价函数 g(u)：
 ```
-g(u) = Σ_{k=1}^K [ e_k^T Q e_k + u_k^T R u_k ]
+g(u) = sum_{k=1}^K [ e_k' * Q * e_k + u_k' * R * u_k ]
 ```
 其中 Q = diag(30, 30, 1)（位置 30，姿态 1），R = diag(0.3, 0.3, 0.3)（控制正则），e_k 为跟踪误差。
 
 **论文公式 (19)** — 跟踪误差 e_k 的 SO(2) 一阶展开：
 ```
-e_k = ξ_w(t0) + [R(ψ_w(t0)), 0; 0, 1] · Σ_{l=0}^{k-1} ν_l · τ - ξ^k_r + O(τ²)
+e_k = state + [R(psi0), 0; 0, 1] * sum_{l=0}^{k-1} nu(:,l) * dt - path(:, step+k) + O(dt^2)
 ```
-其中 O(τ²) 为高阶余项，τ=0.01s 时为 1e-4，代码中略去。
+其中 O(dt^2) 为高阶余项，dt=0.01s 时为 1e-4，代码中略去。
 
 由 4 部分代价累加而成：
 
@@ -279,14 +280,14 @@ e_k = ξ_w(t0) + [R(ψ_w(t0)), 0; 0, 1] · Σ_{l=0}^{k-1} ν_l · τ - ξ^k_r + 
 
 **论文公式 (18) 第一项位置部分** + **论文公式 (19) 位置展开**：
 
-跟踪误差的一阶展开（略去 O(τ²)）：
+跟踪误差的一阶展开（略去 O(dt^2)）：
 ```
-position_error_k = current_xy - ref_xy_k + R(ψ0)·(current_nu(1:2)·τ + Σ_{j=1}^{k-1} nu(1:2,j)·τ)
-                 = c_k + R_psi0·dt·S_k
+position_error_k = current_xy - ref_xy_k + R(psi0)*(current_nu(1:2)*dt + sum_{j=1}^{k-1} nu(1:2,j)*dt)
+                 = c_k + R_psi0*dt*S_k
 ```
-其中 `c_k = current_xy - ref_xy + R_psi0·current_nu(1:2)·dt`（常数），`S_k = Σ_{j=1}^{k-1} nu(1:2,j)`（决策变量）。
+其中 `c_k = current_xy - ref_xy + R_psi0*current_nu(1:2)*dt`（常数），`S_k = sum_{j=1}^{k-1} nu(1:2,j)`（决策变量）。
 
-代价 = `w_pos · ||c_k + R_psi0·dt·S_k||²`，利用 `R_psi0^T·R_psi0 = I`：
+代价 = `w_pos * ||c_k + R_psi0*dt*S_k||^2`，利用 `R_psi0'*R_psi0 = I`：
 
 ```matlab
 for k = 2:K
@@ -294,7 +295,7 @@ for k = 2:K
     c_k = current_xy - ref_xy + R_psi0 * current_nu(1:2) * dt;
     grad_dir = R_psi0' * c_k;  % 2×1
 
-    % 二次项: H(nu_x(i), nu_x(j)) += 2·w_pos·dt^2 (对 i,j ∈ [1, k-1])
+    % 二次项: H(nu_x(i), nu_x(j)) += 2*w_pos*dt^2 (对 i,j in [1, k-1])
     for i = 1:k-1
         for j = 1:k-1
             nu_x_i = nu_start + (i-1)*3;
@@ -306,7 +307,7 @@ for k = 2:K
         end
     end
 
-    % 一次项: g(nu_x(j)) += 2·w_pos·dt·grad_dir(1) (对 j ∈ [1, k-1])
+    % 一次项: g(nu_x(j)) += 2*w_pos*dt*grad_dir(1) (对 j in [1, k-1])
     for j = 1:k-1
         nu_x_j = nu_start + (j-1)*3;
         nu_y_j = nu_start + (j-1)*3 + 1;
@@ -316,7 +317,7 @@ for k = 2:K
 end
 ```
 
-**系数说明**：`||v||² = v^Tv`，在 `0.5·x'Hx` 形式中 Hessian 系数需乘 2。`w_pos·dt²·(Σx)²` 展开后每对 (i,j) 贡献 `w_pos·dt²`，乘 2 后得 `2·w_pos·dt²`。
+**系数说明**：`||v||^2 = v'*v`，在 `0.5*x'*H*x` 形式中 Hessian 系数需乘 2。`w_pos*dt^2*(sum x)^2` 展开后每对 (i,j) 贡献 `w_pos*dt^2`，乘 2 后得 `2*w_pos*dt^2`。
 
 #### 4.3.2 姿态跟踪代价（k=1..K）
 
@@ -324,16 +325,16 @@ end
 
 姿态误差：`psi(k) - ref_psi_k`，其中
 ```
-psi(k) = ψ0 + current_nu(3)·dt + dt·Σ_{j=1}^{k-1} nu(3,j)
+psi(k) = psi0 + current_nu(3)*dt + dt*sum_{j=1}^{k-1} nu(3,j)
 ```
-常数部分：`psi_c_k = ψ0 + current_nu(3)·dt - ref_psi_k`
+常数部分：`psi_c_k = psi0 + current_nu(3)*dt - ref_psi_k`
 
 ```matlab
 for k = 1:K
     ref_psi = path(3, min(size(path,2), step+k));
     psi_c_k = psi0 + current_nu(3)*dt - ref_psi;
 
-    % 二次项: H(nu_psi(i), nu_psi(j)) += 2·w_psi·dt^2
+    % 二次项: H(nu_psi(i), nu_psi(j)) += 2*w_psi*dt^2
     for i = 1:k-1
         for j = 1:k-1
             nu_psi_i = nu_start + (i-1)*3 + 2;
@@ -342,7 +343,7 @@ for k = 1:K
         end
     end
 
-    % 一次项: g(nu_psi(j)) += 2·w_psi·dt·psi_c_k
+    % 一次项: g(nu_psi(j)) += 2*w_psi*dt*psi_c_k
     for j = 1:k-1
         nu_psi_j = nu_start + (j-1)*3 + 2;
         g_vec(nu_psi_j) = g_vec(nu_psi_j) + 2 * w_psi * dt * psi_c_k;
@@ -350,13 +351,13 @@ for k = 1:K
 end
 ```
 
-**k=1 时**：循环 `1:0` 为空，不贡献二次/一次项，只贡献常数项 `w_psi·psi_c_1²`。
+**k=1 时**：循环 `1:0` 为空，不贡献二次/一次项，只贡献常数项 `w_psi*psi_c_1^2`。
 
 #### 4.3.3 控制正则化（k=1..K）
 
 **论文公式 (18) 第二项** — 控制能量正则化：
 ```
-u_k^T R u_k,   R = diag(0.3, 0.3, 0.3)
+u_k' * R * u_k,   R = diag(0.3, 0.3, 0.3)
 ```
 
 ```matlab
@@ -368,16 +369,16 @@ for k = 1:K
 end
 ```
 
-代价 `w_control·||u||² = w_control·Σ u(i,k)²`，对每个对角元贡献 `2·w_control`。
+代价 `w_control*||u||^2 = w_control*sum u(i,k)^2`，对每个对角元贡献 `2*w_control`。
 
 #### 4.3.4 RSS 强凸正则化（k=1..K）
 
 **论文公式 (17) 第二项** — 强凸正则化：
 ```
-ρ · ||u - û||²    (提供强凸性, 保证 S(û) 唯一解, 论文 Theorem 1)
+rho * ||u - u_hat||^2    (提供强凸性, 保证 S(u_hat) 唯一解, 论文 Theorem 1)
 ```
 
-`ρ·||u - û||² = ρ·(||u||² - 2·u^T·û + ||û||²)`
+`rho*||u - u_hat||^2 = rho*(||u||^2 - 2*u'*u_hat + ||u_hat||^2)`
 
 ```matlab
 for k = 1:K
@@ -397,29 +398,29 @@ H_mat = 0.5 * (H_mat + H_mat');  % 保证对称
 
 常数项 `objective_constant` 仅用于 `obj_value` 比较，不影响最优解：
 ```matlab
-objective_constant = Σ_{k=2}^K w_pos·||c_k||² + Σ_{k=1}^K w_psi·psi_c_k² + ρ·||û||²
+objective_constant = sum_{k=2}^K w_pos*||c_k||^2 + sum_{k=1}^K w_psi*psi_c_k^2 + rho*||u_hat||^2
 ```
 
 ---
 
-### 4.4 等式约束 A·x = b（动力学递推，共 18 条）
+### 4.4 等式约束 A*x = b（动力学递推，共 18 条）
 
 **论文公式 (9)** — 离散化动力学（车体系速度递推）：
 ```
-ν_{k+1} = ν_k + u_{k+1},   k = 0, 1, ..., K-1
+nu(:,k+1) = nu(:,k) + u(:,k+1),   k = 0, 1, ..., K-1
 ```
 
 **论文公式 (20c)** — 等式约束集（包含在 Q_K 中）：
 ```
-u ∈ {u : ν_{k+1} = ν_k + u_{k+1}}
+u in {u : nu(:,k+1) = nu(:,k) + u(:,k+1)}
 ```
 
-动力学：`ν_{k+1} = ν_k + u_{k+1}`
+动力学：`nu(:,k+1) = nu(:,k) + u(:,k+1)`
 
 #### 4.4.1 初始条件（3 条）
 
 ```matlab
-% nu(:,1) - u(:,1) = current_nu  即 ν_1 = ν_0 + u_1
+% nu(:,1) - u(:,1) = current_nu  即 nu(:,1) = current_nu + u(:,1)
 for i = 1:3
     u_idx = i;                       % u(i,1)
     nu_idx = nu_start + i - 1;       % nu(i,1)
@@ -430,7 +431,7 @@ for i = 1:3
 end
 ```
 
-#### 4.4.2 递推约束（3·(K-1) = 15 条）
+#### 4.4.2 递推约束（3*(K-1) = 15 条）
 
 ```matlab
 % nu(:,k+1) - nu(:,k) - u(:,k+1) = 0
@@ -452,22 +453,22 @@ end
 
 ### 4.5 二次不等式约束（共 72 条）
 
-QCQP 形式：`0.5·x'Hq_i·x + gq_i'·x ≤ uq_i`
+QCQP 形式：`0.5*x'*Hq_i*x + gq_i'*x <= uq_i`
 
 **论文公式 (20a)** — 转向锥约束（凸化后）+ **论文公式 (20b)** — 轮速 SOC 约束：
 ```
-(20a): C^k_{i,n}(u, û) ≤ 0     (转向锥, 凸化后)
-(20b): ||H_n · ν_k|| ≤ vimax   (轮速, 原本就是凸的)
+(20a): C^k_{i,n}(u, u_hat) <= 0     (转向锥, 凸化后)
+(20b): ||H_n * nu(:,k)|| <= vimax   (轮速, 原本就是凸的)
 ```
 
 #### 4.5.1 轮速 SOC 约束（4×K = 24 条）
 
 **论文公式 (20b)** — 轮速约束：
 ```
-||H_n · ν_k|| ≤ vimax,   ∀n ∈ {1,...,N}, k ∈ {1,...,K}
+||H_n * nu(:,k)|| <= vimax,   for all n in {1,...,N}, k in {1,...,K}
 ```
 
-`||H_n·ν_k|| ≤ vimax` → `ν_k^T·M_n·ν_k ≤ vimax²`
+`||H_n*nu(:,k)|| <= vimax` -> `nu(:,k)'*M_n*nu(:,k) <= vimax^2`
 
 ```matlab
 for k = 1:K
@@ -476,7 +477,7 @@ for k = 1:K
         gq_k = zeros(n_var, 1);
         nu_k_start = nu_start + (k-1)*3;
         nu_k_end   = nu_start + (k-1)*3 + 2;
-        % Hq 在 nu(:,k) 块 = 2·M_n (因 0.5·x'Hq·x 形式)
+        % Hq 在 nu(:,k) 块 = 2*M_n (因 0.5*x'*Hq*x 形式)
         Hq_k(nu_k_start:nu_k_end, nu_k_start:nu_k_end) = 2 * M_cell{n};
         Hq_list{end+1} = Hq_k;
         gq_list{end+1} = gq_k;
@@ -489,34 +490,34 @@ end
 
 **论文公式 (12)** — 原始双线性转向锥约束（非凸）：
 ```
-(R_i · z_n(t_k))^T · z_n(t_{k+1}) ≥ 0,   i ∈ {1, 2}
-R_1 = R(π/2 - δ_ω),   R_2 = R_1^T
+(R_i * z_n(t_k))' * z_n(t_{k+1}) >= 0,   i in {1, 2}
+R_1 = R(pi/2 - delta_theta),   R_2 = R_1'
 ```
 
-**论文公式 (13)** — 代入 z_n = H_n·ν_k（论文 (4)）后：
+**论文公式 (13)** — 代入 z_n = H_n*nu(:,k)（论文 (4)）后：
 ```
-ν_{k-1}^T · H_n^T · R_i^T · H_n · (ν_{k-1} + u_k) ≥ 0   (非凸双线性)
+nu(:,k-1)' * H_n' * R_i' * H_n * (nu(:,k-1) + u(:,k)) >= 0   (非凸双线性)
 ```
 
 **论文公式 (15)** — Proposition 1 凸化后的约束：
 ```
-C^k_{i,n}(u, û) = A^k_{i,n}(u) - B^k_{i,n}(û) - L^k_{i,n}(u, û) ≤ 0
+C^k_{i,n}(u, u_hat) = A^k_{i,n}(u) - B^k_{i,n}(u_hat) - L^k_{i,n}(u, u_hat) <= 0
 ```
 
 **论文公式 (16)** — A, B, L 定义：
 ```
-A^k_{i,n}(u) = 1/2 · ||H_n·ν_{k-1}||² + 1/2 · ||H_n·(ν_{k-1}+u_k)||²   (凸, 关于 u)
-B^k_{i,n}(û) = 1/2 · ||(I+R_i)·H_n·ν̂_{k-1} + R_i·H_n·û_k||²            (常数, 在 û 处)
-L^k_{i,n}(u, û) = ∇_u B|_û · (u - û)                                    (B 的一阶展开, 线性)
+A^k_{i,n}(u) = 1/2 * ||H_n*nu(:,k-1)||^2 + 1/2 * ||H_n*(nu(:,k-1)+u(:,k))||^2   (凸, 关于 u)
+B^k_{i,n}(u_hat) = 1/2 * ||(I+R_i)*H_n*nu_hat(:,k-1) + R_i*H_n*u_hat(:,k)||^2     (常数, 在 u_hat 处)
+L^k_{i,n}(u, u_hat) = ∇_u B|_u_hat * (u - u_hat)                                 (B 的一阶展开, 线性)
 ```
 
 两组旋转矩阵：
 ```matlab
-R1 = [sin(delta_theta), -cos(delta_theta); cos(delta_theta),  sin(delta_theta)];  % R(π/2-δ_ω)
-R2 = [sin(delta_theta),  cos(delta_theta); -cos(delta_theta), sin(delta_theta)]; % R1^T
+R1 = [sin(delta_theta), -cos(delta_theta); cos(delta_theta),  sin(delta_theta)];  % R(pi/2-delta_theta)
+R2 = [sin(delta_theta),  cos(delta_theta); -cos(delta_theta), sin(delta_theta)]; % R1'
 ```
 
-构造 `nu_hat`（û 对应的 ν̂ 序列，用于凸化的 B 项）：
+构造 `nu_hat`（u_hat 对应的 nu_hat 序列，用于凸化的 B 项）：
 ```matlab
 nu_hat = zeros(3, K);
 nu_hat(:, 1) = current_nu + u_hat(:, 1);
@@ -527,28 +528,28 @@ end
 
 子函数 `add_steering_cone_constraints` 对每个 (k, n) 构造一条约束。约束形式（**论文公式 (15)**）：
 ```
-C^k_{i,n}(u, û) = A(u) - B(û) - L(u, û) ≤ 0
+C^k_{i,n}(u, u_hat) = A(u) - B(u_hat) - L(u, u_hat) <= 0
 ```
 
 其中 A/B/L 由 **论文公式 (16)** 定义：
 ```
-A(u) = 1/2·||H_n·ν_{k-1}||² + 1/2·||H_n·(ν_{k-1}+u_k)||²          (二次, 凸)
-B(û) = 1/2·||(I+R_i)·H_n·ν̂_{k-1} + R_i·H_n·û_k||²                  (常数, 在 û 处)
-L(u, û) = ∇_u B|_û · (u - û)                                         (线性, B 的一阶展开)
+A(u) = 1/2*||H_n*nu(:,k-1)||^2 + 1/2*||H_n*(nu(:,k-1)+u(:,k))||^2    (二次, 凸)
+B(u_hat) = 1/2*||(I+R_i)*H_n*nu_hat(:,k-1) + R_i*H_n*u_hat(:,k)||^2     (常数, 在 u_hat 处)
+L(u, u_hat) = ∇_u B|_u_hat * (u - u_hat)                                (线性, B 的一阶展开)
 ```
 
-##### k > 1 情况（ν_{k-1} 是决策变量）
+##### k > 1 情况（nu(:,k-1) 是决策变量）
 
 ```matlab
-% b = (I+R)·H_n·ν̂_{k-1} + R·H_n·û_k  (B 项的核)
+% b = (I+R)*H_n*nu_hat(:,k-1) + R*H_n*u_hat(:,k)  (B 项的核)
 lv = (eye(2) + R) * Hn * nu_hat(:, k-1) + R * Hn * u_hat(:, k);
 
-% A 项 (二次): ||H_n·ν_{k-1}||² + ||H_n·(ν_{k-1}+u_k)||²
-%   = ν_{k-1}^T·M_n·ν_{k-1} + (ν_{k-1}+u_k)^T·M_n·(ν_{k-1}+u_k)
-% 在 0.5·x'Hq·x 形式:
-%   Hq(ν_{k-1}, ν_{k-1}) = 4·M_n  (两项各贡献 2·M_n)
-%   Hq(ν_{k-1}, u_k)     = 2·M_n
-%   Hq(u_k, u_k)         = 2·M_n
+% A 项 (二次): ||H_n*nu(:,k-1)||^2 + ||H_n*(nu(:,k-1)+u(:,k))||^2
+%   = nu(:,k-1)'*M_n*nu(:,k-1) + (nu(:,k-1)+u(:,k))'*M_n*(nu(:,k-1)+u(:,k))
+% 在 0.5*x'*Hq*x 形式:
+%   Hq(nu(:,k-1), nu(:,k-1)) = 4*M_n  (两项各贡献 2*M_n)
+%   Hq(nu(:,k-1), u(:,k))    = 2*M_n
+%   Hq(u(:,k), u(:,k))        = 2*M_n
 nu_k1_start = nu_start + (k-2)*3;
 nu_k1_end   = nu_start + (k-2)*3 + 2;
 u_k_start   = (k-1)*3 + 1;
@@ -558,9 +559,9 @@ Hq_k(nu_k1_start:nu_k1_end, u_k_start:u_k_end)     = 2 * Mn;
 Hq_k(u_k_start:u_k_end, nu_k1_start:nu_k1_end)     = 2 * Mn;
 Hq_k(u_k_start:u_k_end, u_k_start:u_k_end)         = 2 * Mn;
 
-% L 项 (线性): -∇B·(u-û)
-%   对 u_l (l<k): gq += -2·((I+R)'·lv)'·H_n
-%   对 u_k:       gq += -2·(R'·lv)'·H_n
+% L 项 (线性): -∇B*(u-u_hat)
+%   对 u(:,l) (l<k): gq += -2*((I+R)'*lv)'*H_n
+%   对 u(:,k):       gq += -2*(R'*lv)'*H_n
 for l = 1:k-1
     coeff = -2 * ((eye(2) + R)' * lv)' * Hn;
     u_l_start = (l-1)*3 + 1;
@@ -569,28 +570,28 @@ end
 coeff_k = -2 * (R' * lv)' * Hn;
 gq_k(u_k_start:u_k_start+2) = gq_k(u_k_start:u_k_start+2) + coeff_k';
 
-% B + L 中的 û 常数 (移到 uq)
+% B + L 中的 u_hat 常数 (移到 uq)
 u_hat_const = 0;
 for l = 1:k-1
     u_hat_const = u_hat_const + 2 * lv' * (eye(2) + R) * Hn * u_hat(:, l);
 end
 u_hat_const = u_hat_const + 2 * lv' * R * Hn * u_hat(:, k);
-uq_val = lv' * lv - u_hat_const;  % ||b||² - L 中的 û 常数部分
+uq_val = lv' * lv - u_hat_const;  % ||b||^2 - L 中的 u_hat 常数部分
 ```
 
-##### k = 1 情况（ν_0 = current_nu 是已知常数）
+##### k = 1 情况（nu(:,0) = current_nu 是已知常数）
 
 ```matlab
-% b = (I+R)·H_n·ν_0 + R·H_n·û_1
+% b = (I+R)*H_n*current_nu + R*H_n*u_hat(:,1)
 lv = (eye(2) + R) * Hn * current_nu + R * Hn * u_hat(:, 1);
 
-% A 项: 只有 u_1^T·M_n·u_1 是决策变量部分 (ν_0 常数移到 uq)
+% A 项: 只有 u(:,1)'*M_n*u(:,1) 是决策变量部分 (current_nu 常数移到 uq)
 Hq_k(1:3, 1:3) = 2 * Mn;
 
-% 线性项: 2·ν_0^T·M_n·u_1 (来自 A) - 2·b^T·R·H_n·u_1 (来自 -L)
+% 线性项: 2*current_nu'*M_n*u(:,1) (来自 A) - 2*b'*R*H_n*u(:,1) (来自 -L)
 gq_k(1:3) = 2 * Mn' * current_nu - 2 * Hn' * R' * lv;
 
-% 常数项: -2·ν_0^T·M_n·ν_0 (A 常数) + ||b||² (B) - 2·b^T·R·H_n·û_1 (L 中 û 常数)
+% 常数项: -2*current_nu'*M_n*current_nu (A 常数) + ||b||^2 (B) - 2*b'*R*H_n*u_hat(:,1) (L 中 u_hat 常数)
 uq_val = -2 * current_nu' * Mn * current_nu + lv' * lv - 2 * lv' * R * Hn * u_hat(:, 1);
 ```
 
@@ -623,8 +624,8 @@ qp_problem.objective_constant = objective_constant;
 ```
 
 **关于 `C`/`d`/`lb`/`ub` 为空**：对应 HPIPM dense QP 公式 (1) 中的：
-- `C`, `d` — 一般线性不等式 `d_ ≤ Cv ≤ d^`（本代码未启用，设 `ng=0`）
-- `lb`, `ub` — box 约束 `v_ ≤ v ≤ v^`（本代码未启用，设 `nb=0`）
+- `C`, `d` — 一般线性不等式 `d_lb <= C*v <= d_ub`（本代码未启用，设 `ng=0`）
+- `lb`, `ub` — box 约束 `v_lb <= v <= v_ub`（本代码未启用，设 `nb=0`）
 
 本代码使用 HPIPM 硬约束子集（`nb=0, ng=0, ns=0, 无 slack`），退化为纯 QCQP。
 
@@ -637,21 +638,21 @@ qp_problem.objective_constant = objective_constant;
 min_{v,s}  1/2 [v;1]^T [H  g; g^T  0] [v;1]
           + 1/2 [s^l;s^u;1]^T [Z^l  0  z^l; 0  Z^u  z^u; (z^l)^T (z^u)^T  0] [s^l;s^u;1]
 s.t. A v = b                                                              (等式)
-     [v_; d_] ≤ [J^{b,v}; C] v + [J^{s,v}; J^{s,g}] s^l                  (下界+slack)
-     [J^{b,v}; C] v - [J^{s,v}; J^{s,g}] s^u ≤ [v^; d^]                  (上界+slack)
-     s^l ≥ s^l_lb,  s^u ≥ s^u_lb                                          (slack 非负)
+     [v_lb; d_lb] <= [J^{b,v}; C] v + [J^{s,v}; J^{s,g}] s^l              (下界+slack)
+     [J^{b,v}; C] v - [J^{s,v}; J^{s,g}] s^u <= [v_ub; d_ub]              (上界+slack)
+     s^l >= s^l_lb,  s^u >= s^u_lb                                         (slack 非负)
 ```
 
 **dense QCQP 扩展** — 在 dense QP 基础上增加二次约束：
 ```
-0.5 v^T Hq_i v + gq_i^T v ≤ uq_i   (二次不等式, 亦可带 slack)
+0.5 v^T Hq_i v + gq_i^T v <= uq_i   (二次不等式, 亦可带 slack)
 ```
 
 **本代码使用硬约束子集**（`nb=0, ng=0, ns=0, 无 slack`）：
 ```
 min  0.5 x^T H x + g^T x
 s.t. A x = b                                  (等式, 论文 (20c) 动力学)
-     0.5 x^T Hq_i x + gq_i^T x ≤ uq_i         (二次不等式, 论文 (20a)+(20b))
+     0.5 x^T Hq_i x + gq_i^T x <= uq_i         (二次不等式, 论文 (20a)+(20b))
 ```
 
 ### 5.1 接口
@@ -785,11 +786,11 @@ control_RSS.m
        │     ├─ 1. 构造 H, g (代价: 位置 + 姿态 + 控制正则 + RSS 强凸)
        │     ├─ 2. 构造 A, b (等式: 初始 3 + 递推 15 = 18)
        │     ├─ 3. 构造 Hq, gq, uq (二次约束: 轮速 24 + 转向锥 48 = 72)
-       │     │     ├─ 轮速: ||H_n·ν_k|| ≤ vimax
-       │     │     └─ 转向锥: C = A - B - L ≤ 0 (两组 R 矩阵)
+       │     │     ├─ 轮速: ||H_n*nu(:,k)|| <= vimax
+       │     │     └─ 转向锥: C = A - B - L <= 0 (两组 R 矩阵)
        │     └─ return qp_problem struct
        │
-       ├─ cell → 3D numpy 转换
+       ├─ cell -> 3D numpy 转换
        │
        ├─ result = py.hpipm_qp_solver.solve_qcqp(H, g, A, b, Hq, gq, uq)
        │     │
@@ -799,10 +800,10 @@ control_RSS.m
        │     └─ return dict('x', 'status', 'obj_value', 'solve_time')
        │
        ├─ u = reshape(x(1:18), 3, K)            % 提取 u
-       └─ u_hat = u                              % 更新 û, 下次凸化使用
+       └─ u_hat = u                              % 更新 u_hat, 下次凸化使用
   │
-  └─ 输出: new_state_dot = R(ψ)·(ν_0 + 1·u_1)
-          velocity     = ν_0 + u_1
+  └─ 输出: new_state_dot = R(psi)*(state_dot + 1*u(:,1))
+          velocity     = state_dot + u(:,1)
 ```
 
 ---
@@ -813,7 +814,7 @@ control_RSS.m
 
 2. **SQP 无条件更新**：`u_hat = u` 无论求解成功失败都更新（论文 Alg.1 无 break-on-failure）。失败时 `u_sol = zeros(3,K)`。
 
-3. **k1=1 硬编码**：`control_RSS.m` line 32 硬编码 `k1=1`，覆盖 `config.m` 中的 `0.15`。对应论文 Alg.1 line 11: `ν_1 = ν_0 + u_1`（增益为 1）。
+3. **k1=1 硬编码**：`control_RSS.m` 硬编码 `k1=1`，覆盖 `config.m` 中的 `0.15`。对应论文 Alg.1 line 11: `velocity = state_dot + k1*u(:,1)`（增益为 1）。
 
 4. **persistent 防内存泄漏**：Python 模块 `hpipm_qp_solver` 只 import 一次，避免重复 reload 导致 `libhpipm.dll` 内存泄漏（曾触发 WinError 8）。
 
@@ -821,4 +822,4 @@ control_RSS.m
 
 6. **变量命名**：HPIPM C/Python wrapper 内部决策变量名为 `v`（与论文符号一致），返回 dict 的键名为 `'x'`（代码命名），MATLAB 端通过 `result{'x'}` 读取。
 
-7. **硬约束子集**：本代码未启用 HPIPM 的 slack/box/一般线性约束（`nb=0, ng=0, ns=0`），退化为纯 QCQP。所有非线性约束都转为二次形式 `0.5·x'Hq·x + gq'·x ≤ uq`。
+7. **硬约束子集**：本代码未启用 HPIPM 的 slack/box/一般线性约束（`nb=0, ng=0, ns=0`），退化为纯 QCQP。所有非线性约束都转为二次形式 `0.5*x'*Hq*x + gq'*x <= uq`。
