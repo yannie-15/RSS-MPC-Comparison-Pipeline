@@ -16,9 +16,12 @@ function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, sta
 %   e_k = ξ_w(t0+kτ) - ξ^k_r 为跟踪误差
 %
 % 跟踪误差 e_k 的一阶展开 (论文公式 19, SO(2) 上的一阶展开):
-%   e_k ≈ ξ_w(t0) + [R(ψ_w(t0)), 0; 0, 1]·Σ_{l=0}^{k-1} ν_l·τ - ξ^k_r
-%   即位置误差 = current_xy - ref_xy + R(ψ0)·Σ ν_l·τ (旋转矩阵线性化)
-%       姿态误差 = ψ0 + current_nu(3)·τ + Σ ν_3·τ - ref_psi
+%   e_k = ξ_w(t0) + [R(ψ_w(t0)), 0; 0, 1]·Σ_{l=0}^{k-1} ν_l·τ - ξ^k_r + O(τ^2)
+%
+% 其中 O(τ^2) 是 SO(2) 一阶展开的高阶余项 (τ=0.01s 时 O(τ^2)=1e-4, 可忽略)
+% 代码中略去 O(τ^2), 即:
+%   位置误差 = current_xy - ref_xy + R(ψ0)·Σ ν_l·τ (旋转矩阵线性化)
+%   姿态误差 = ψ0 + current_nu(3)·τ + Σ ν_3·τ - ref_psi
 %
 % 约束:
 %   (1) 动力学等式 (论文公式 20c): ν_{k+1} = ν_k + u_{k+1}
