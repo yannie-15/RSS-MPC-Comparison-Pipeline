@@ -202,7 +202,7 @@ end
 
 ## 4. `construct_complete_qp_from_rss.m` — QP 矩阵构造详解
 
-### 4.1 接口
+### 4.1 接口与总览
 
 ```matlab
 function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, state, u_hat, params)
@@ -211,51 +211,20 @@ function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, sta
 - 输入：参考轨迹、当前步、当前车体速度 `current_nu`、当前位姿、上次迭代解 `u_hat`、参数
 - 输出：`qp_problem` 结构体，含 `H, g, A, b, C(空), d(空), lb(空), ub(空), Hq(cell), gq(cell), uq, n_var, K, n_eq, n_qcqp, objective_constant`
 
-### 4.2 预备量
+#### 论文公式 → H 填充位置总览
 
-#### 4.2.1 特征矩阵 H_n（2×3）
+下表把 RSS 论文公式逐项翻译为 H 矩阵中的填充位置与系数（代码细节见 4.2 节）：
 
-**论文公式 (3)** — 第 n 个轮子的特征矩阵：
-```
-H_n = [1, 0, -dy_n; 0, 1, dx_n]
-```
+| 论文公式 | 论文原始形式 | H 中的位置 | H 中的系数 | 代码行 |
+|---|---|---|---|---|
+| (18) 位置 `e_k'Q e_k` | `w_pos·‖R·Σ ν·dt‖^2` | nu_x, nu_y 跨阶段交叉 | `2·w_pos·dt^2` | [L166-167](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L166-L167) |
+| (18) 姿态 `e_k'Q e_k` | `w_psi·(dt·Σ ν_ψ)^2` | nu_psi 跨阶段交叉 | `2·w_psi·dt^2` | [L207](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L207) |
+| (18) 控制 `u'Ru` | `w_control·‖u‖^2` | u 块对角 | `2·w_control` | [L227](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L227) |
+| (17) 强凸项 | `rho·‖u‖^2` | u 块对角 | `2·rho` | [L241](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L241) |
 
-**论文公式 (4)** — 对齐条件（z_n 为轮子平面投影的车体速度）：
-```
-z_n = H_n * nu
-```
+### 4.2 目标函数 H, g 构造
 
-```matlab
-for n = 1:num_wheels
-    H_cell{n} = [1, 0, -wheel_pos(n, 2);   % -dy_n
-                 0, 1,  wheel_pos(n, 1)];   %  dx_n
-end
-```
-
-M_n = H_n' * H_n（3×3），用于轮速二次约束。
-
-#### 4.2.2 旋转矩阵 R(psi0)
-
-```matlab
-R_psi0 = [cos(psi0), -sin(psi0); sin(psi0), cos(psi0)];
-```
-
-#### 4.2.3 delta_theta
-
-**论文公式 (11)** — 单步最大转向角变化：
-```
-delta_theta = phidotmax * dt
-```
-
-```matlab
-delta_theta = dt * phidotmax;  % = 0.01 * 5*pi = pi/20
-```
-
----
-
-### 4.3 目标函数 H, g 构造
-
-#### 4.3.1 论文原始代价（公式 17-19）
+#### 4.2.1 论文原始代价（公式 17-19）
 
 **论文公式 (17)** — 凸子问题 Q_K(u_hat) 的目标函数：
 ```
@@ -281,7 +250,7 @@ e_k = state + [R(psi0), 0; 0, 1] * sum_{l=0}^{k-1} nu(:,l) * dt - path(:, step+k
 3. 控制正则化 `u'Ru`
 4. RSS 强凸正则化 `rho*||u-u_hat||^2`
 
-#### 4.3.2 标准形式转换（论文 → HPIPM）
+#### 4.2.2 标准形式转换（论文 → HPIPM）
 
 HPIPM dense QCQP 求解器要求的目标函数标准形式（[hpipm_qp_solver.py:28](algorithms/RSS_proposed/hpipm_qp_solver.py#L28)）：
 ```
@@ -298,18 +267,7 @@ min  0.5 x' H x + g' x
 
 **关键点**：代码里 `H_mat(...) += 2*w_pos*dt^2`（[L166-167](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L166-L167)）、`g_vec(...) += 2*w_pos*dt*grad_dir`（[L176-177](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L176-L177)）等系数都带 `2`，就是因为这个换算——把 `‖v‖^2` 形式适配到 HPIPM 的 `0.5·x'Hx` 形式。
 
-#### 4.3.3 论文公式 → H 填充位置对照
-
-下表把 RSS 论文公式逐项翻译为 H 矩阵中的填充位置与系数：
-
-| 论文公式 | 论文原始形式 | H 中的位置 | H 中的系数 | 代码行 |
-|---|---|---|---|---|
-| (18) 位置 `e_k'Q e_k` | `w_pos·‖R·Σ ν·dt‖^2` | nu_x, nu_y 跨阶段交叉 | `2·w_pos·dt^2` | [L166-167](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L166-L167) |
-| (18) 姿态 `e_k'Q e_k` | `w_psi·(dt·Σ ν_ψ)^2` | nu_psi 跨阶段交叉 | `2·w_psi·dt^2` | [L207](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L207) |
-| (18) 控制 `u'Ru` | `w_control·‖u‖^2` | u 块对角 | `2·w_control` | [L227](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L227) |
-| (17) 强凸项 | `rho·‖u‖^2` | u 块对角 | `2·rho` | [L241](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L241) |
-
-#### 4.3.4 H 矩阵最终结构
+#### 4.2.3 H 矩阵最终结构
 
 ```
                     u 块 (1..18)                nu 块 (19..36)
@@ -331,7 +289,7 @@ min  0.5 x' H x + g' x
 - **nu 块**：有跨阶段交叉项（因为 `Σ ν_l·dt` 的平方展开后产生 (i,j) 对的交叉）
 - **u 与 nu 无交叉项**
 
-#### 4.3.5 逐项填充代码
+#### 4.2.4 逐项填充代码
 
 ##### (1) 位置跟踪代价（k=2..K，对应论文 (18) 位置 + (19) 展开）
 
@@ -462,7 +420,7 @@ end
 
 填充位置：**u 块对角**（与项 (3) 叠加）。
 
-#### 4.3.6 H 对称化与常数项收尾
+#### 4.2.5 H 对称化与常数项收尾
 
 ```matlab
 H_mat = 0.5 * (H_mat + H_mat');  % 保证对称 (数值稳定性)
@@ -477,7 +435,7 @@ objective_constant = sum_{k=2}^K w_pos*||c_k||^2
 
 它**不影响最优解 x\***（HPIPM 求解时不需要），只用于事后计算真实的 `obj_value` 做指标对比（论文 Table II 的 J_total）。
 
-#### 4.3.7 拆解总结
+#### 4.2.6 拆解总结
 
 ```
 0.5 x' H x  ← 二次项: 位置跟踪、姿态跟踪、控制正则化、RSS 强凸正则
@@ -486,6 +444,48 @@ objective_constant = sum_{k=2}^K w_pos*||c_k||^2
 ```
 
 这种分离是为了把论文公式 (18) 的原始代价 `e'Qe + u'Ru + rho*||u-u_hat||^2` 套进 HPIPM 求解器规定的 `0.5*x'Hx + g'x` 模板。
+
+---
+
+### 4.3 预备量
+
+#### 4.3.1 特征矩阵 H_n（2×3）
+
+**论文公式 (3)** — 第 n 个轮子的特征矩阵：
+```
+H_n = [1, 0, -dy_n; 0, 1, dx_n]
+```
+
+**论文公式 (4)** — 对齐条件（z_n 为轮子平面投影的车体速度）：
+```
+z_n = H_n * nu
+```
+
+```matlab
+for n = 1:num_wheels
+    H_cell{n} = [1, 0, -wheel_pos(n, 2);   % -dy_n
+                 0, 1,  wheel_pos(n, 1)];   %  dx_n
+end
+```
+
+M_n = H_n' * H_n（3×3），用于轮速二次约束。
+
+#### 4.3.2 旋转矩阵 R(psi0)
+
+```matlab
+R_psi0 = [cos(psi0), -sin(psi0); sin(psi0), cos(psi0)];
+```
+
+#### 4.3.3 delta_theta
+
+**论文公式 (11)** — 单步最大转向角变化：
+```
+delta_theta = phidotmax * dt
+```
+
+```matlab
+delta_theta = dt * phidotmax;  % = 0.01 * 5*pi = pi/20
+```
 
 ---
 
