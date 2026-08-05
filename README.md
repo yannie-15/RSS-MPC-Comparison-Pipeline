@@ -187,3 +187,140 @@ verify_constraints_hpipm
 ```
 
 验证 HPIPM 求解的解是否满足原始非线性约束（轮速 SOC 约束、转向角速率约束）。输出汇总报告 + `verification/results/hpipm_constraint_verification.mat`。
+
+---
+
+## RSS_proposed 算法文件详解
+
+### 文件总览
+
+| 文件 | 作用 |
+|------|------|
+| `control_RSS.m` | 算法主入口，SQP 外层循环 + 调用 Python 求解器 |
+| `construct_complete_qp_from_rss.m` | QP/QCQP 矩阵显式构造（含 Bug1-5 修复） |
+| `hpipm_qp_solver.py` | Python 端 HPIPM dense QCQP 求解器封装 |
+| `config.m` | 算法参数（机器人几何、控制器增益、仿真参数、路径控制点） |
+| `build_hpipm_windows.sh` | Windows MSYS2 编译 blasfeo + hpipm 共享库脚本 |
+| `.gitignore` | 忽略 MATLAB 自动备份与验证产物 |
+
+### 调用逻辑（单步 MPC）
+
+```
+control_RSS.m
+  ├─ 1. 读取 config() 参数
+  ├─ 2. 初始化 persistent Python 环境 (首次调用时)
+  │     └─ sys.path.append(当前目录) + importlib.reload(hpipm_qp_solver)
+  ├─ 3. SQP 外层循环 (m = 1..3, 无条件更新 u_hat)
+  │     │
+  │     ├─ 3.1 调用 construct_complete_qp_from_rss(path, step, current_nu, state, u_hat, params)
+  │     │       │
+  │     │       ├─ 构造 Hessian H (n_var × n_var)
+  │     │       │     位置代价 w_pos=30 + 姿态代价 w_psi=1 + 控制正则 w_control=0.3 + RSS 松弛 rho=0.01
+  │     │       ├─ 构造等式约束 A*x = b (动力学递推, 3K 条)
+  │     │       ├─ 构造二次约束 Hq/gq/uq
+  │     │       │     ├─ 轮速 SOC 约束 (4 轮 × K 步 = 24 条)
+  │     │       │     └─ 转向锥凸化约束 (两组 R 矩阵 × 4 轮 × K 步 = 48 条)
+  │     │       └─ 返回 qp 结构体 (H, g, A, b, Hq, gq, uq, 元数据)
+  │     │
+  │     ├─ 3.2 cell → 3D numpy 数组转换
+  │     │       Hq cell (n_var × n_var) → Hq_3d (n_var × n_var × n_qcqp)
+  │     │       gq cell (n_var × 1)    → gq_2d (n_var × n_qcqp)
+  │     │
+  │     ├─ 3.3 调用 Python 求解器
+  │     │       result = py.hpipm_qp_solver.solve_qcqp(H, g, A, b, Hq_3d, gq_2d, uq, verbose=False)
+  │     │       │
+  │     │       └─ [Python 内部] hpipm_qp_solver.solve_qcqp
+  │     │             ├─ 数组类型统一 (np.asarray float64)
+  │     │             ├─ 设置 hpipm_dense_qcqp_dim (nv, ne, nq)
+  │     │             ├─ 设置 hpipm_dense_qcqp (H, g, A, b, Hq, gq, uq)
+  │     │             ├─ 求解: balance 模式 + tol=1e-6 + iter_max=300
+  │     │             ├─ 若失败回退: robust 模式 + iter_max=500
+  │     │             └─ 返回 {x, status, obj_value, solve_time, iters}
+  │     │
+  │     ├─ 3.4 提取解 x (n_var,), 取前 3K 维 reshape 为 u_sol (3 × K)
+  │     ├─ 3.5 记录诊断 (status, optval, solve_time, solver_name)
+  │     └─ 3.6 无条件更新 u_hat = u_sol (与原始 CVX 0121 分支一致)
+  │
+  ├─ 4. 输出状态导数 new_state_dot = R(psi) * (current_nu + k1 * u(:,1))  [k1=1 硬编码]
+  ├─ 5. 输出车体系速度 velocity = current_nu + u(:,1)
+  └─ 6. 汇总 diagnostics.total_solve_time
+```
+
+### 决策变量与约束规模
+
+| 项目 | 维度 | 说明 |
+|------|------|------|
+| 决策变量 `x` | 36 | `x = [u(:); nu(:)]`，u 为 3×K 控制增量，nu 为 3×K 车体系速度 |
+| 等式约束 | 18 | 动力学递推：`nu(:,1)=current_nu+u(:,1)`，`nu(:,k+1)=nu(:,k)+u(:,k+1)` |
+| 二次约束 | 24 | 轮速 SOC：`‖H_n · nu(:,k)‖ ≤ vimax`，4 轮 × 6 步 |
+| 二次约束 | 48 | 转向锥凸化：两组 R 矩阵线性化，4 轮 × 6 步 × 2 |
+| 预测时域 K | 6 | 固定 |
+
+### 各文件目的
+
+#### `control_RSS.m` — 算法主入口
+- **接口**：`[u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, state_dot, state)`
+- **职责**：
+  1. 加载参数（`K=6, rho=0.01, k1=1, max_iter=3`）
+  2. 初始化 Python 环境（`persistent` 变量保证只设置一次 `sys.path` 与一次 `importlib.reload`）
+  3. SQP 外层循环 3 次迭代：每次调用 `construct_complete_qp_from_rss` 构造 QP → 调用 `py.hpipm_qp_solver.solve_qcqp` 求解
+  4. **关键策略**：无论求解成功失败都更新 `u_hat = u_sol`，不 break、不回退（与原始 CVX 0121 分支完全一致）
+  5. 输出控制增量 `u`、世界系状态导数、车体系速度、诊断结构体
+
+#### `construct_complete_qp_from_rss.m` — QP 矩阵构造
+- **接口**：`qp = construct_complete_qp_from_rss(path, step, current_nu, state, u_hat, params)`
+- **职责**：将 RSS 原始非凸问题显式构造为 dense QCQP 标准形式
+  - **目标函数** `0.5·x'Hx + g'x`：
+    - 位置跟踪代价（`w_pos=30`，k=2..K）
+    - 姿态跟踪代价（`w_psi=1`，k=1..K）
+    - 控制正则化（`w_control=0.3`，`‖u‖²`）
+    - RSS 松弛项（`rho=0.01`，`‖u-u_hat‖²`）
+  - **等式约束** `A·x = b`：动力学递推（3K 条）
+  - **二次约束** `0.5·x'Hq_i·x + gq_i'·x ≤ uq_i`：
+    - 轮速 SOC 约束（4×K=24 条）
+    - 转向锥凸化约束（两组 R 矩阵，2×4×K=48 条）
+- **Bug 修复记录**（5 个索引/系数 Bug，与原 CVX 公式对齐）：
+  - Bug1：nu 索引偏移从 +1/+2/+3 改为 +0/+1/+2
+  - Bug2：加入跨预测阶段的 Hessian 交叉项
+  - Bug3：位置代价常数部分加入 `current_nu(1:2)·dt` 位移
+  - Bug4：Hessian 系数改为 `2·w·dt²`（适配 `0.5·x'Hx` 形式）
+  - Bug5：等式约束递推段索引从 `+i` 改为 `+(i-1)`
+- **返回**：结构体 `qp`（含 H, g, A, b, Hq cell, gq cell, uq, 元数据）
+
+#### `hpipm_qp_solver.py` — Python 求解器封装
+- **接口**：`result = solve_qcqp(H, g, A, b, Hq, gq, uq, verbose=False)`
+- **职责**：仅负责求解，不构造 QP
+  1. import 时自动设置 `libhpipm.dll` 搜索路径（`os.add_dll_directory` + PATH fallback）
+  2. 加载 HPIPM Python wrapper（`hpipm_dense_qcqp_dim/qcqp/sol/solver_arg/solver`）
+  3. 将 MATLAB 传入的 numpy 数组统一转为 `float64`
+  4. 设置维度 `nv/ne/nb/ng/nq`，填入 QP 数据
+  5. 求解：`balance` 模式 + `tol=1e-6` + `iter_max=300`
+  6. **失败回退**：`robust` 模式 + `iter_max=500`
+  7. 返回 dict：`{x, status, status_str, obj_value, solve_time, iters}`
+
+#### `config.m` — 算法参数
+- **机器人几何**：`Lx=0.655m, Ly=0.335m`，4 轮位置（`wheel_pos`）
+- **约束上限**：`vimax=5 m/s`（最大轮速），`phidotmax=5π rad/s`（最大转向角速率）
+- **控制器增益**：`k1=k2=0.15, k3=0.1, eps=0.001`（注：`control_RSS.m` 中 `k1` 硬编码为 1，覆盖此值）
+- **仿真参数**：`dt=0.01s, t_end=1s, num_steps=100`
+- **参考路径**：5 个 Bernstein 控制点（生成贝塞尔曲线参考轨迹）
+
+#### `build_hpipm_windows.sh` — 编译脚本
+- **目的**：在 Windows MSYS2 环境编译 `blasfeo` 静态库 + `hpipm` 共享库
+- **前置**：MSYS2 UCRT64 + gcc + make + bc
+- **产物**：
+  - `third_party/blasfeo/lib/libblasfeo.a`
+  - `third_party/hpipm/lib/libhpipm.so` 与 `libhpipm.dll`（Windows Python ctypes 加载需 `.dll` 扩展名）
+- **用法**：`C:\msys64\usr\bin\env.exe MSYSTEM=UCRT64 /usr/bin/bash -lc "<脚本路径>"`
+
+#### `.gitignore`
+- 忽略 MATLAB 自动备份（`*.asv, *.m~`）
+- 忽略约束验证产物（`constraint_verification_results.mat`）
+
+### 关键设计点
+
+1. **MATLAB + Python 分工**：MATLAB 负责构造 QP 矩阵（修复 Bug1-5）与 SQP 外层循环；Python 仅负责求解（`balance` + `robust` 回退）
+2. **SQP 无条件更新**：与原始 CVX 0121 分支一致，无论成功失败都更新 `u_hat`，不 break、不回退
+3. **k1=1 硬编码**：`control_RSS.m` 第 25 行 `k1=1`，覆盖 `config.m` 中的 `params.k1=0.15`，匹配原 CVX 0121 分支行为
+4. **persistent 环境初始化**：避免每次调用都重新加载 Python 模块，防止 `libhpipm.dll` 内存泄漏（曾导致 WinError 8）
+5. **DLL 路径自动设置**：`hpipm_qp_solver.py` 在 import 时自动通过 `os.add_dll_directory` 添加 `third_party/hpipm/lib/` 到搜索路径
