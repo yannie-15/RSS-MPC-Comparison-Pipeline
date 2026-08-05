@@ -11,12 +11,21 @@ HPIPM dense QCQP 求解器封装 (Python 接口)
 接口:
     solve_qcqp(H, g, A, b, Hq, gq, uq) -> dict(x, status, obj_value, solve_time, iters)
 
-HPIPM dense QCQP 标准形式 (对应 HPIPM 论文 Section II-B):
-    min  0.5*x'Hx + g'x
-    s.t. Bx <= d           (box bounds, 这里 nb=0 不用)
-         Cx = 0 (dim 2, 这里 ng=0 不用)
-         Ax = b              (等式约束, 论文 (20c) 动力学)
-         0.5*x'Hq_i*x + gq_i'x <= uq_i  (二次不等式, 论文 (20a)+(20b))
+HPIPM dense QCQP 标准形式 (对应 HPIPM 论文 Section 2.1 公式 (1) 的简化子集):
+
+HPIPM 完整 dense QP 形式 (HPIPM 论文公式 (1)) 含 slack 变量与双侧约束:
+    min  0.5*v'H*v + g'*v + 0.5*(s^l,s^u)'*Z*(s^l,s^u) + ...
+    s.t. A*v = b                                  (等式约束)
+         [lb; lg] <= [J^{b,v}; C]*v + J^s*s^l      (下界, 带 slack)
+         [J^{b,v}; C]*v - J^s*s^u <= [ub; ug]     (上界, 带 slack)
+         0.5*v'*Hq_i*v + gq_i'*v <= uq_i           (二次约束, 带 slack)
+         s^l >= s^l_lb, s^u >= s^u_lb             (slack 非负)
+
+本代码仅使用等式约束 + 二次不等式约束子集 (设 nb=0, ng=0, ns=0):
+    min  0.5*x'*H*x + g'*x
+    s.t. A*x = b                                  (等式约束, 论文 (20c) 动力学)
+         0.5*x'*Hq_i*x + gq_i'*x <= uq_i          (二次不等式, 论文 (20a)+(20b))
+即 HPIPM 的 slack/box/线性约束均未启用, 退化为纯 QCQP
 
 HPIPM 求解器模式 (对应 HPIPM 论文 Section III):
     - 'balance': 平衡模式 (默认, 论文 IV-B 中 ECOS 默认参数的等价)
