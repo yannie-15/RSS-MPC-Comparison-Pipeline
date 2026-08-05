@@ -192,4 +192,4 @@ verify_constraints_hpipm
 
 ## RSS_proposed 算法文件详解
 
-详见 [algorithms/RSS_proposed/RSS_proposed_算法详解.md](algorithms/RSS_proposed/RSS_proposed_算法详解.md)（含文件总览、物理量参数、`construct_complete_qp_from_rss.m` 的 H/g/A/b/Hq/gq/uq 矩阵构造逐步说明、调用逻辑、关键设计点）。
+详见 [RSS_proposed_算法详解.md](RSS_proposed_算法详解.md)（含文件总览、物理量参数、`construct_complete_qp_from_rss.m` 的 H/g/A/b/Hq/gq/uq 矩阵构造逐步说明、调用逻辑、关键设计点）。
