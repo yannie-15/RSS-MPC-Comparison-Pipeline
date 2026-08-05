@@ -1,3 +1,15 @@
 [submodule "third_party/blasfeo"]
 	path = third_party/blasfeo
 	url = https://github.com/giaf/blasfeo.git
+[submodule "algorithms/RSS_sqp"]
+	path = algorithms/RSS_sqp
+	url = https://github.com/serendipitjx/RSS_sqp.git
+	branch = main
+[submodule "algorithms/RSS_fmincon"]
+	path = algorithms/RSS_fmincon
+	url = https://github.com/serendipitjx/RSS_fmincon.git
+	branch = main
+[submodule "algorithms/RSS_active_set"]
+	path = algorithms/RSS_active_set
+	url = https://github.com/serendipitjx/RSS_fmincon.git
+	branch = active-set
