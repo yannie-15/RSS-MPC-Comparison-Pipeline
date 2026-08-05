@@ -255,56 +255,13 @@ delta_theta = dt * phidotmax;  % = 0.01 * 5*pi = pi/20
 
 ### 4.3 目标函数 H, g 构造
 
-目标函数形式：`0.5*x'*H*x + g'*x + const`
-
-#### 为什么是这个形式？
-
-这是 **HPIPM dense QCQP 求解器要求的标准形式**（参见 [hpipm_qp_solver.py:28](algorithms/RSS_proposed/hpipm_qp_solver.py#L28)）：
-
-```
-min  0.5 x' H x + g' x
-```
-
-代码构造的代价项必须套进这个模板。
-
-**论文原始代价 vs 标准形式**
-
-论文公式 (18) 的代价是：
-
-```
-g(u) = sum_k [ e_k' Q e_k + u_k' R u_k ]     (二次型, 无 0.5 系数)
-```
-
-展开后形如 `||·||^2 = v' v`。要把它写成 `0.5 x' H x + g' x`，必须做系数换算：
-
-| 原始项 | 标准形式贡献 |
-|---|---|
-| `w · ‖S‖^2` (二次) | `H += 2·w`，因 `0.5·x'(2w·I)x = w·‖x‖^2` |
-| `2·w·c'·S` (一次) | `g += 2·w·c`，因 `g'x = 2·w·c'·x` |
-| `w·‖c‖^2` (常数) | 累加到 `objective_constant` |
-
-这就是代码里 `H_mat(...) += 2*w_pos*dt^2`（[construct_complete_qp_from_rss.m:166-167](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L166-L167)）、`g_vec(...) += 2*w_pos*dt*grad_dir`（[construct_complete_qp_from_rss.m:176-177](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L176-L177)）系数都带 `2` 的原因——把 `‖v‖^2` 形式适配到 HPIPM 的 `0.5·x'Hx` 形式。
-
-**常数项 const 的作用**
-
-`objective_constant`（[construct_complete_qp_from_rss.m:255-274](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L255-L274)）包含 `‖c_k‖^2`、`psi_c_k^2`、`rho*‖u_hat‖^2` 等不依赖决策变量的常数。它**不影响最优解 x\***，只用于事后计算真实的 `obj_value` 做指标对比（论文 Table II 的 J_total）。所以 HPIPM 求解时不需要它，但保留在结构体里供 MATLAB 端使用。
-
-**拆解总结**
-
-```
-0.5 x' H x  ← 二次项: 位置跟踪、姿态跟踪、控制正则化、RSS 强凸正则
-   g' x     ← 一次项: 跟踪误差的常数偏移、RSS 正则的 -2*rho*u_hat 项
-   const    ← 常数项: ‖c_k‖^2、ψ_c_k^2、rho·‖u_hat‖^2 (不影响最优解, 仅用于指标)
-```
-
-这种分离是为了把论文公式 (18) 的原始代价 `e'Qe + u'Ru + rho*‖u-u_hat‖^2` 套进 HPIPM 求解器规定的 `0.5*x'Hx + g'x` 模板。
-
----
+#### 4.3.1 论文原始代价（公式 17-19）
 
 **论文公式 (17)** — 凸子问题 Q_K(u_hat) 的目标函数：
 ```
 f(u, u_hat) = g(u) + rho * ||u - u_hat||^2
 ```
+其中 `g(u)` 为跟踪代价，`rho*||u-u_hat||^2` 为 RSS 强凸正则化（保证 S(u_hat) 唯一解，论文 Theorem 1）。
 
 **论文公式 (18)** — 代价函数 g(u)：
 ```
@@ -318,11 +275,65 @@ e_k = state + [R(psi0), 0; 0, 1] * sum_{l=0}^{k-1} nu(:,l) * dt - path(:, step+k
 ```
 其中 O(dt^2) 为高阶余项，dt=0.01s 时为 1e-4，代码中略去。
 
-由 4 部分代价累加而成：
+由 (17)+(18) 可知，目标函数由 **4 部分代价累加**：
+1. 位置跟踪 `e_k'Q e_k`（位置部分）
+2. 姿态跟踪 `e_k'Q e_k`（姿态部分）
+3. 控制正则化 `u'Ru`
+4. RSS 强凸正则化 `rho*||u-u_hat||^2`
 
-#### 4.3.1 位置跟踪代价（k=2..K）
+#### 4.3.2 标准形式转换（论文 → HPIPM）
 
-**论文公式 (18) 第一项位置部分** + **论文公式 (19) 位置展开**：
+HPIPM dense QCQP 求解器要求的目标函数标准形式（[hpipm_qp_solver.py:28](algorithms/RSS_proposed/hpipm_qp_solver.py#L28)）：
+```
+min  0.5 x' H x + g' x
+```
+
+但论文公式 (18) 写成 `||·||^2 = v'v` 形式（无 0.5 系数）。要把论文代价套进 HPIPM 模板，必须做系数换算：
+
+| 论文原始项 | 标准形式贡献 | 换算依据 |
+|---|---|---|
+| `w · ‖S‖^2` (二次) | `H += 2·w` | `0.5·x'(2w·I)x = w·‖x‖^2` |
+| `2·w·c'·S` (一次) | `g += 2·w·c` | `g'x = 2·w·c'·x` |
+| `w·‖c‖^2` (常数) | 累加到 `objective_constant` | 不含决策变量 |
+
+**关键点**：代码里 `H_mat(...) += 2*w_pos*dt^2`（[L166-167](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L166-L167)）、`g_vec(...) += 2*w_pos*dt*grad_dir`（[L176-177](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L176-L177)）等系数都带 `2`，就是因为这个换算——把 `‖v‖^2` 形式适配到 HPIPM 的 `0.5·x'Hx` 形式。
+
+#### 4.3.3 论文公式 → H 填充位置对照
+
+下表把 RSS 论文公式逐项翻译为 H 矩阵中的填充位置与系数：
+
+| 论文公式 | 论文原始形式 | H 中的位置 | H 中的系数 | 代码行 |
+|---|---|---|---|---|
+| (18) 位置 `e_k'Q e_k` | `w_pos·‖R·Σ ν·dt‖^2` | nu_x, nu_y 跨阶段交叉 | `2·w_pos·dt^2` | [L166-167](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L166-L167) |
+| (18) 姿态 `e_k'Q e_k` | `w_psi·(dt·Σ ν_ψ)^2` | nu_psi 跨阶段交叉 | `2·w_psi·dt^2` | [L207](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L207) |
+| (18) 控制 `u'Ru` | `w_control·‖u‖^2` | u 块对角 | `2·w_control` | [L227](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L227) |
+| (17) 强凸项 | `rho·‖u‖^2` | u 块对角 | `2·rho` | [L241](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L241) |
+
+#### 4.3.4 H 矩阵最终结构
+
+```
+                    u 块 (1..18)                nu 块 (19..36)
+              ┌────────────────────────┬──────────────────────────┐
+              │                        │                          │
+   u 块       │ 2*(w_control + rho)*I  │      0                   │
+   (1..18)    │  (纯对角)              │   (u 与 nu 无交叉)        │
+              │                        │                          │
+              ├────────────────────────┼──────────────────────────┤
+              │                        │  位置 Hessian:           │
+              │                        │   nu_x, nu_y 跨阶段交叉  │
+   nu 块      │      0                 │  姿态 Hessian:           │
+   (19..36)   │                        │   nu_psi 跨阶段交叉      │
+              │                        │  (nu_x/y/psi 之间无交叉) │
+              └────────────────────────┴──────────────────────────┘
+```
+
+- **u 块**：纯对角（控制正则 + RSS 正则），每个 u(i,k) 独立
+- **nu 块**：有跨阶段交叉项（因为 `Σ ν_l·dt` 的平方展开后产生 (i,j) 对的交叉）
+- **u 与 nu 无交叉项**
+
+#### 4.3.5 逐项填充代码
+
+##### (1) 位置跟踪代价（k=2..K，对应论文 (18) 位置 + (19) 展开）
 
 跟踪误差的一阶展开（略去 O(dt^2)）：
 ```
@@ -331,7 +342,12 @@ position_error_k = current_xy - ref_xy_k + R(psi0)*(current_nu(1:2)*dt + sum_{j=
 ```
 其中 `c_k = current_xy - ref_xy + R_psi0*current_nu(1:2)*dt`（常数），`S_k = sum_{j=1}^{k-1} nu(1:2,j)`（决策变量）。
 
-代价 = `w_pos * ||c_k + R_psi0*dt*S_k||^2`，利用 `R_psi0'*R_psi0 = I`：
+代价 `w_pos*||c_k + R_psi0*dt*S_k||^2` 展开（利用 `R_psi0'*R_psi0 = I`）：
+```
+= w_pos*||c_k||^2                          ← 常数 → objective_constant
++ 2*w_pos*dt*(R_psi0'*c_k)'*S_k            ← 一次项 → g_vec
++ w_pos*dt^2*||S_k||^2                     ← 二次项 → H_mat
+```
 
 ```matlab
 for k = 2:K
@@ -361,17 +377,22 @@ for k = 2:K
 end
 ```
 
-**系数说明**：`||v||^2 = v'*v`，在 `0.5*x'*H*x` 形式中 Hessian 系数需乘 2。`w_pos*dt^2*(sum x)^2` 展开后每对 (i,j) 贡献 `w_pos*dt^2`，乘 2 后得 `2*w_pos*dt^2`。
+填充位置：**nu 块的 x 行、y 行的跨阶段交叉**（i,j ∈ [1,k-1]）。
 
-#### 4.3.2 姿态跟踪代价（k=1..K）
-
-**论文公式 (18) 第一项姿态部分** + **论文公式 (19) 姿态展开**：
+##### (2) 姿态跟踪代价（k=1..K，对应论文 (18) 姿态 + (19) 展开）
 
 姿态误差：`psi(k) - ref_psi_k`，其中
 ```
 psi(k) = psi0 + current_nu(3)*dt + dt*sum_{j=1}^{k-1} nu(3,j)
 ```
 常数部分：`psi_c_k = psi0 + current_nu(3)*dt - ref_psi_k`
+
+代价 `w_psi*(psi_c_k + dt*Σ nu_psi)^2` 展开：
+```
+= w_psi*psi_c_k^2                          ← 常数
++ 2*w_psi*dt*psi_c_k*Σ nu_psi              ← 一次项 → g_vec
++ w_psi*dt^2*(Σ nu_psi)^2                  ← 二次项 → H_mat
+```
 
 ```matlab
 for k = 1:K
@@ -397,12 +418,15 @@ end
 
 **k=1 时**：循环 `1:0` 为空，不贡献二次/一次项，只贡献常数项 `w_psi*psi_c_1^2`。
 
-#### 4.3.3 控制正则化（k=1..K）
+填充位置：**nu 块的 ψ 行（nu(3,:)）的跨阶段交叉**。
 
-**论文公式 (18) 第二项** — 控制能量正则化：
+##### (3) 控制正则化（k=1..K，对应论文 (18) 第二项）
+
 ```
 u_k' * R * u_k,   R = diag(0.3, 0.3, 0.3)
 ```
+
+代价 `w_control*||u||^2 = w_control*sum u(i,k)^2`，由于每个分量独立，H 只在对角有值：
 
 ```matlab
 for k = 1:K
@@ -413,16 +437,18 @@ for k = 1:K
 end
 ```
 
-代价 `w_control*||u||^2 = w_control*sum u(i,k)^2`，对每个对角元贡献 `2*w_control`。
+填充位置：**u 块对角**（u(1:18) 的对角元）。
 
-#### 4.3.4 RSS 强凸正则化（k=1..K）
+##### (4) RSS 强凸正则化（k=1..K，对应论文 (17) 第二项）
 
-**论文公式 (17) 第二项** — 强凸正则化：
 ```
 rho * ||u - u_hat||^2    (提供强凸性, 保证 S(u_hat) 唯一解, 论文 Theorem 1)
 ```
 
-`rho*||u - u_hat||^2 = rho*(||u||^2 - 2*u'*u_hat + ||u_hat||^2)`
+展开 `rho*||u - u_hat||^2 = rho*(||u||^2 - 2*u'*u_hat + ||u_hat||^2)`：
+- `rho*||u||^2` → 二次项进 H（u 对角）
+- `-2*rho*u'*u_hat` → 一次项进 g
+- `rho*||u_hat||^2` → 常数
 
 ```matlab
 for k = 1:K
@@ -434,16 +460,32 @@ for k = 1:K
 end
 ```
 
-#### 4.3.5 H 对称化与常数项
+填充位置：**u 块对角**（与项 (3) 叠加）。
+
+#### 4.3.6 H 对称化与常数项收尾
 
 ```matlab
-H_mat = 0.5 * (H_mat + H_mat');  % 保证对称
+H_mat = 0.5 * (H_mat + H_mat');  % 保证对称 (数值稳定性)
 ```
 
-常数项 `objective_constant` 仅用于 `obj_value` 比较，不影响最优解：
-```matlab
-objective_constant = sum_{k=2}^K w_pos*||c_k||^2 + sum_{k=1}^K w_psi*psi_c_k^2 + rho*||u_hat||^2
+**常数项 `objective_constant`** 收集所有不含决策变量的常数项（[L255-274](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L255-L274)）：
 ```
+objective_constant = sum_{k=2}^K w_pos*||c_k||^2
+                   + sum_{k=1}^K w_psi*psi_c_k^2
+                   + rho*||u_hat||^2
+```
+
+它**不影响最优解 x\***（HPIPM 求解时不需要），只用于事后计算真实的 `obj_value` 做指标对比（论文 Table II 的 J_total）。
+
+#### 4.3.7 拆解总结
+
+```
+0.5 x' H x  ← 二次项: 位置跟踪、姿态跟踪、控制正则化、RSS 强凸正则
+   g' x     ← 一次项: 跟踪误差的常数偏移、RSS 正则的 -2*rho*u_hat 项
+   const    ← 常数项: ||c_k||^2、psi_c_k^2、rho*||u_hat||^2 (不影响最优解, 仅用于指标)
+```
+
+这种分离是为了把论文公式 (18) 的原始代价 `e'Qe + u'Ru + rho*||u-u_hat||^2` 套进 HPIPM 求解器规定的 `0.5*x'Hx + g'x` 模板。
 
 ---
 
