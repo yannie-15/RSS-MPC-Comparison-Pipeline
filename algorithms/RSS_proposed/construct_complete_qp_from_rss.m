@@ -120,8 +120,10 @@ function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, sta
     %
     % ||v||^2 = v^T·v, 在 0.5·x^T·H·x 形式中 Hessian 系数需乘 2
 
-    H_mat = zeros(n_var, n_var);
-    g_vec = zeros(n_var, 1);
+    % 命名约定: _mat=矩阵, _vec=向量, _eq=等式约束, _ineq=不等式约束
+    % 这些中间变量在最后统一赋值到 qp_problem 结构体 (字段名对齐 HPIPM API)
+    H_mat = zeros(n_var, n_var);  % 目标 Hessian (对应 HPIPM H)
+    g_vec = zeros(n_var, 1);      % 目标线性项 (对应 HPIPM g)
 
     % -------------------------------------------------------
     % 1.1 位置跟踪代价: Σ_{k=2}^K w_pos · ||position_error_k||^2
@@ -280,8 +282,8 @@ function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, sta
     % => A·x = b 形式
 
     n_eq = 3*K;  % 3 (初始) + 3·(K-1) (递推) = 18
-    A_eq = zeros(n_eq, n_var);
-    b_eq = zeros(n_eq, 1);
+    A_eq = zeros(n_eq, n_var);  % 等式约束矩阵 (对应 HPIPM A)
+    b_eq = zeros(n_eq, 1);     % 等式约束右端 (对应 HPIPM b)
 
     eq_row = 1;
 
@@ -319,6 +321,8 @@ function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, sta
     % 3. 线性不等式约束 (暂无, 所有非线性约束在二次约束中)
     % ======================================================
 
+    % C_ineq, d_ineq: 一般线性不等式约束 d_ <= Cx <= d^ (对应 HPIPM C, d)
+    % 本代码未启用 (设 ng=0), 仅保留字段以对齐 HPIPM API
     C_ineq = [];
     d_ineq = [];
 
@@ -427,10 +431,10 @@ function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, sta
     qp_problem.g = g_vec;       % 代价线性项
     qp_problem.A = A_eq;        % 等式约束矩阵 (动力学)
     qp_problem.b = b_eq;        % 等式约束右端
-    qp_problem.C = C_ineq;      % 线性不等式 (空)
-    qp_problem.d = d_ineq;
-    qp_problem.lb = [];
-    qp_problem.ub = [];
+    qp_problem.C = C_ineq;      % 一般线性不等式矩阵 (空, ng=0)
+    qp_problem.d = d_ineq;      % 一般线性不等式右端 (空)
+    qp_problem.lb = [];         % box 下界 (空, nb=0)
+    qp_problem.ub = [];         % box 上界 (空, nb=0)
 
     % 二次约束 (轮速 24 + 转向锥 48 = 72 条)
     qp_problem.Hq = Hq_list;
