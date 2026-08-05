@@ -1,0 +1,6 @@
+# MATLAB
+*.asv
+*.m~
+
+# Verification output
+constraint_verification_results.mat

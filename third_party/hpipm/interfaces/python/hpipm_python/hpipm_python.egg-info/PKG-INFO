@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: hpipm-python
+Version: 0.2
+Summary: Python interface to HPIPM
+Home-page: http://github.com/giaf/hpipm
+Author: Andrea Zanelli - Gianluca Frison
+License: BSD-2
+Dynamic: author
+Dynamic: home-page
+Dynamic: license
+Dynamic: summary
