@@ -267,6 +267,70 @@ min  0.5 x' H x + g' x
 
 **关键点**：代码里 `H_mat(...) += 2*w_pos*dt^2`（[L166-167](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L166-L167)）、`g_vec(...) += 2*w_pos*dt*grad_dir`（[L176-177](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L176-L177)）等系数都带 `2`，就是因为这个换算——把 `‖v‖^2` 形式适配到 HPIPM 的 `0.5·x'Hx` 形式。
 
+##### 表中 `S` 和 `c` 的具体含义
+
+表中 `S` 和 `c` **不是论文原文符号**，而是把论文 `e_k'Q e_k` 展开后的**中间变量**，对应代码中的实际变量：
+
+| 简化记号 | 位置部分代码 | 姿态部分代码 |
+|---|---|---|
+| `S` | `R_psi0·dt·S_k`（其中 `S_k = Σ_{j=1}^{k-1} nu(1:2,j)`） | `dt·sum(nu(3,1:k-1))` |
+| `c` | `c_k = current_xy - ref_xy + R_psi0·current_nu(1:2)·dt` | `psi_c_k = psi0 + current_nu(3)·dt - ref_psi` |
+| `w` | `w_pos = 30` | `w_psi = 1` |
+
+**展开过程（以位置为例）**：
+
+跟踪误差展开（基于论文公式 19）：
+```
+e_k_xy = c_k + R_psi0·dt·S_k
+         │      └────── S ──────┘
+         └── c ──┘
+```
+
+代价 `w_pos·‖e_k_xy‖^2` 展开为三部分：
+```
+w_pos·‖c_k + R_psi0·dt·S_k‖^2
+= w_pos·‖c_k‖^2                          ← w·‖c‖^2  (常数 → objective_constant)
++ 2·w_pos·(c_k)'·R_psi0·dt·S_k           ← 2·w·c'·S (一次 → g_vec)
++ w_pos·‖R_psi0·dt·S_k‖^2                ← w·‖S‖^2  (二次 → H_mat)
+```
+
+利用 `R_psi0'·R_psi0 = I`（旋转矩阵正交性），二次项中 R 自动消去：
+```
+‖R_psi0·dt·S_k‖^2 = dt^2·‖S_k‖^2 = dt^2·Σ_{i,j} nu(:,i)'·nu(:,j)
+```
+
+这就是 H 中 **nu 块跨阶段交叉项**的来源。
+
+**代码里的实际变量名**：
+
+位置部分（[L153-179](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L153-L179)）：
+```matlab
+c_k = current_xy - ref_xy + R_psi0 * current_nu(1:2) * dt;  % ← 这就是 c
+grad_dir = R_psi0' * c_k;                                    % c 经 R' 转换
+% ...
+H_mat(...) += 2*w_pos*dt^2;        % 二次项 (S)
+g_vec(...) += 2*w_pos*dt*grad_dir; % 一次项 (c)
+% ...
+objective_constant += w_pos*(c_k'*c_k);  % 常数项 (c) [L262]
+```
+
+姿态部分（[L199-216](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L199-L216)）：
+```matlab
+psi_c_k = psi0 + current_nu(3)*dt - ref_psi;  % ← 这就是 c
+% ...
+H_mat(...) += 2*w_psi*dt^2;        % 二次项 (S)
+g_vec(...) += 2*w_psi*dt*psi_c_k;  % 一次项 (c)
+% ...
+objective_constant += w_psi*psi_c_k^2;  % 常数项 (c) [L270]
+```
+
+**总结**：
+- `c` = `c_k`（位置）/ `psi_c_k`（姿态）= 跟踪误差的**常数部分**（不含决策变量）
+- `S` = `R_psi0·dt·S_k`（位置）/ `dt·Σ nu(3,j)`（姿态）= 跟踪误差的**决策变量部分**
+- `w` = `w_pos`（位置）/ `w_psi`（姿态）= Q 矩阵的对角权重
+
+表里用 `S` 和 `c` 是为了抽象出共同的二次型展开模式 `‖c+S‖^2 = ‖c‖^2 + 2c'S + ‖S‖^2`，让位置和姿态两部分的换算逻辑统一。
+
 #### 4.2.3 H 矩阵最终结构
 
 ```
