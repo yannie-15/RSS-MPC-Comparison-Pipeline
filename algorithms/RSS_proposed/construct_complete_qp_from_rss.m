@@ -81,20 +81,15 @@ function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, sta
     %   H_n = [1, 0, -dy_n; 0, 1, dx_n]
     % 论文公式 (4): z_n = H_n · ν̇_c (alignment 条件)
     % =====================================================
-    H_cell = cell(1, num_wheels);
+    Hn = cell(1, num_wheels);
     for n = 1:num_wheels
-        H_cell{n} = [
+        Hn{n} = [
             1, 0, -wheel_pos(n, 2);   % -dy_n
             0, 1,  wheel_pos(n, 1)    %  dx_n
         ];
     end
 
-    % M_n = H_n^T · H_n (3×3), 用于轮速二次约束 (||H_n·ν||^2 = ν^T·M_n·ν)
-    M_cell = cell(1, num_wheels);
-    for n = 1:num_wheels
-        M_cell{n} = H_cell{n}' * H_cell{n};
-    end
-
+    % 注: 论文无 M 显式符号, H_n'·H_n 在需要处直接计算
     % 论文公式 (11): δ_ω = ω_max · τ (单步最大转向角变化)
     % 论文 IV-A: "steering rate 5π rad/s, dt=0.01s → δ_ω = 5π·0.01 = π/20"
     delta_theta = dt * phidotmax;
@@ -360,9 +355,9 @@ function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, sta
             nu_k_start = nu_start + (k-1)*3;
             nu_k_end = nu_start + (k-1)*3 + 2;
 
-            % ||H_n·ν_k||^2 = ν_k^T·(H_n^T·H_n)·ν_k = ν_k^T·M_n·ν_k
-            % 在 0.5·x^T·Hq·x 形式: Hq = 2·M_n (在 nu_k 块)
-            Hq_k(nu_k_start:nu_k_end, nu_k_start:nu_k_end) = 2 * M_cell{n};
+            % ||H_n·ν_k||^2 = ν_k^T·(H_n^T·H_n)·ν_k
+            % 在 0.5·x^T·Hq·x 形式: Hq = 2·(H_n^T·H_n) (在 nu_k 块)
+            Hq_k(nu_k_start:nu_k_end, nu_k_start:nu_k_end) = 2 * (Hn{n}' * Hn{n});
 
             Hq_list{end+1} = Hq_k;
             gq_list{end+1} = gq_k;
@@ -393,7 +388,7 @@ function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, sta
     % 构造 N×K = 24 条凸化转向锥约束 (R_1 组)
     result = add_steering_cone_constraints( ...
         Hq_list, gq_list, uq_list, ...
-        R1, K, num_wheels, H_cell, M_cell, ...
+        R1, K, num_wheels, Hn, ...
         u_hat, nu_hat, current_nu, ...
         n_var, nu_start, delta_theta ...
     );
@@ -414,7 +409,7 @@ function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, sta
     % 构造 N×K = 24 条凸化转向锥约束 (R_2 组)
     result = add_steering_cone_constraints( ...
         Hq_list, gq_list, uq_list, ...
-        R2, K, num_wheels, H_cell, M_cell, ...
+        R2, K, num_wheels, Hn, ...
         u_hat, nu_hat, current_nu, ...
         n_var, nu_start, delta_theta ...
     );
@@ -477,7 +472,7 @@ end
 
 function result = add_steering_cone_constraints( ...
     Hq_list, gq_list, uq_list, ...
-    R, K, num_wheels, H_cell, M_cell, ...
+    R, K, num_wheels, Hn, ...
     u_hat, nu_hat, current_nu, ...
     n_var, nu_start, delta_theta ...
 )
@@ -487,8 +482,8 @@ function result = add_steering_cone_constraints( ...
             Hq_k = zeros(n_var, n_var);
             gq_k = zeros(n_var, 1);
 
-            Hn = H_cell{n};  % 论文 (3): 2×3 特征矩阵
-            Mn = M_cell{n};  % M_n = H_n^T·H_n
+            H_n = Hn{n};  % 论文 (3): 2×3 特征矩阵
+            Mn = H_n' * H_n;  % M_n = H_n^T·H_n (论文无显式符号, 此处直接计算)
 
             if k > 1
                 % =====================================================
@@ -496,7 +491,7 @@ function result = add_steering_cone_constraints( ...
                 % =====================================================
                 % b = (I+R)·H_n·ν̂_{k-1} + R·H_n·û_k (论文 (16) B 项的核)
                 %   (ν̂_{k-1} 来自上一次迭代的 û 序列)
-                lv = (eye(2) + R) * Hn * nu_hat(:, k-1) + R * Hn * u_hat(:, k);
+                lv = (eye(2) + R) * H_n * nu_hat(:, k-1) + R * H_n * u_hat(:, k);
 
                 % ----- A 项 (二次部分, 论文 (16)) -----
                 % ||H_n·ν_{k-1}||^2 + ||H_n·(ν_{k-1}+u_k)||^2
@@ -524,21 +519,21 @@ function result = add_steering_cone_constraints( ...
 
                 for l = 1:k-1
                     % l < k: ∇_{u_l} b = (I+R)·H_n (论文 (25))
-                    coeff = -2 * ((eye(2) + R)' * lv)' * Hn;  % 1×3
+                    coeff = -2 * ((eye(2) + R)' * lv)' * H_n;  % 1×3
                     u_l_start = (l-1)*3 + 1;
                     gq_k(u_l_start:u_l_start+2) = gq_k(u_l_start:u_l_start+2) + coeff';
                 end
                 % l = k: ∇_{u_k} b = R·H_n (论文 (25))
-                coeff_k = -2 * (R' * lv)' * Hn;  % 1×3
+                coeff_k = -2 * (R' * lv)' * H_n;  % 1×3
                 gq_k(u_k_start:u_k_start+2) = gq_k(u_k_start:u_k_start+2) + coeff_k';
 
                 % ----- B 项 + L 中的 û 常数 (移到右端 uq) -----
                 % uq = ||b||^2 - Σ 2·b^T·(I+R)·H_n·û_l - 2·b^T·R·H_n·û_k
                 u_hat_const = 0;
                 for l = 1:k-1
-                    u_hat_const = u_hat_const + 2 * lv' * (eye(2) + R) * Hn * u_hat(:, l);
+                    u_hat_const = u_hat_const + 2 * lv' * (eye(2) + R) * H_n * u_hat(:, l);
                 end
-                u_hat_const = u_hat_const + 2 * lv' * R * Hn * u_hat(:, k);
+                u_hat_const = u_hat_const + 2 * lv' * R * H_n * u_hat(:, k);
 
                 uq_val = lv' * lv - u_hat_const;  % ||b||^2 - L 中的 û 常数部分
 
@@ -547,7 +542,7 @@ function result = add_steering_cone_constraints( ...
                 % k = 1: 边界情况 (ν_0 = current_nu 是已知常数, 非决策变量)
                 % =====================================================
                 % b = (I+R)·H_n·ν_0 + R·H_n·û_1 (ν_0 替代 ν̂_0)
-                lv = (eye(2) + R) * Hn * current_nu + R * Hn * u_hat(:, 1);
+                lv = (eye(2) + R) * H_n * current_nu + R * H_n * u_hat(:, 1);
 
                 % ----- A 项 (二次部分) -----
                 % ||H_n·ν_0||^2 (常数, 移到 uq) + ||H_n·(ν_0+u_1)||^2
@@ -561,11 +556,11 @@ function result = add_steering_cone_constraints( ...
 
                 % ----- 线性部分 -----
                 % 一次项: 2·ν_0^T·M_n·u_1 (来自 A) - 2·b^T·R·H_n·u_1 (来自 -L)
-                gq_k(u_1_start:u_1_end) = 2 * Mn' * current_nu - 2 * Hn' * R' * lv;
+                gq_k(u_1_start:u_1_end) = 2 * Mn' * current_nu - 2 * H_n' * R' * lv;
 
                 % ----- 常数项 (移到 uq) -----
                 % uq = -2·ν_0^T·M_n·ν_0 (A 中常数) + ||b||^2 (B) - 2·b^T·R·H_n·û_1 (L 中 û 常数)
-                uq_val = -2 * current_nu' * Mn * current_nu + lv' * lv - 2 * lv' * R * Hn * u_hat(:, 1);
+                uq_val = -2 * current_nu' * Mn * current_nu + lv' * lv - 2 * lv' * R * H_n * u_hat(:, 1);
             end
 
             % 确保 Hq 对称 (数值稳定性)

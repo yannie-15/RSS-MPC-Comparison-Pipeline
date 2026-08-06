@@ -7,7 +7,7 @@
 | 公式 | 出处 | 在代码中的对应 |
 |---|---|---|
 | (1) | RSS26 — 车体系->世界系变换 | `control_RSS.m` 输出 `new_state_dot = R(psi)*(state_dot + k1*u(:,1))`，其中 `state_dot+u(:,1)` 是车体系速度，`new_state_dot` 是世界系状态导数 |
-| (3) | RSS26 — 特征矩阵 H_n | `construct_complete_qp_from_rss.m` `H_cell{n}` |
+| (3) | RSS26 — 特征矩阵 H_n | `construct_complete_qp_from_rss.m` `Hn{n}` |
 | (4) | RSS26 — 对齐条件 z_n=H_n*nu | 用于轮速 SOC 约束和转向锥约束 |
 | (9) | RSS26 — 离散化动力学 nu(:,k+1)=nu(:,k)+u(:,k+1) | 等式约束 A*x=b (18 条) |
 | (11) | RSS26 — delta_theta=phidotmax*dt | `delta_theta = dt*phidotmax = pi/20` |
@@ -274,8 +274,23 @@ min  0.5 x' H x + g' x
 | 简化记号 | 位置部分代码 | 姿态部分代码 |
 |---|---|---|
 | `S` | `R_psi0·dt·S_k`（其中 `S_k = Σ_{j=1}^{k-1} nu(1:2,j)`） | `dt·sum(nu(3,1:k-1))` |
-| `c` | `c_k = current_xy - ref_xy + R_psi0·current_nu(1:2)·dt` | `psi_c_k = psi0 + current_nu(3)·dt - ref_psi` |
+| `c` | `c_k = current_xy - ref_xy + R_psi0·current_nu(1:2)·dt` | `psi_c_k = psi0 - ref_psi + current_nu(3)·dt` |
 | `w` | `w_pos = 30` | `w_psi = 1` |
+
+**对齐说明**：两边的 `c` 形式统一为 `当前状态 - 参考 + 第0步位移`：
+
+```
+位置: c_k      = current_xy - ref_xy    + R_psi0·current_nu(1:2)·dt
+                └─当前位置(2维)─┘   └─参考(2维)─┘   └──第0步位移(2维)──┘
+姿态: psi_c_k  = psi0       - ref_psi   + current_nu(3)·dt
+                └─当前姿态(1维)─┘  └─参考(1维)─┘  └─第0步位移(1维)┘
+```
+
+- 第1项：当前状态（位置 `current_xy` / 姿态 `psi0`）
+- 第2项：参考轨迹（`ref_xy` / `ref_psi`）
+- 第3项：第 0 步位移（l=0 的速度积分，用已知量 `current_nu`）
+  - 位置部分需 `R_psi0` 旋转（车体系→世界系）
+  - 姿态部分是标量，无需旋转
 
 **展开过程（以位置为例）**：
 
@@ -527,7 +542,7 @@ z_n = H_n * nu
 
 ```matlab
 for n = 1:num_wheels
-    H_cell{n} = [1, 0, -wheel_pos(n, 2);   % -dy_n
+    Hn{n} = [1, 0, -wheel_pos(n, 2);   % -dy_n
                  0, 1,  wheel_pos(n, 1)];   %  dx_n
 end
 ```
@@ -627,8 +642,8 @@ for k = 1:K
         gq_k = zeros(n_var, 1);
         nu_k_start = nu_start + (k-1)*3;
         nu_k_end   = nu_start + (k-1)*3 + 2;
-        % Hq 在 nu(:,k) 块 = 2*M_n (因 0.5*x'*Hq*x 形式)
-        Hq_k(nu_k_start:nu_k_end, nu_k_start:nu_k_end) = 2 * M_cell{n};
+        % Hq 在 nu(:,k) 块 = 2*(H_n'*H_n) (因 0.5*x'*Hq*x 形式)
+        Hq_k(nu_k_start:nu_k_end, nu_k_start:nu_k_end) = 2 * (Hn{n}' * Hn{n});
         Hq_list{end+1} = Hq_k;
         gq_list{end+1} = gq_k;
         uq_list(end+1) = vimax^2;  % = 25

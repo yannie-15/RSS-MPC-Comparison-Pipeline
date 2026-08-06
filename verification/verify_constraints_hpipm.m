@@ -94,11 +94,11 @@ assert(delta_theta > 0 && delta_theta < pi/2, ...
     '必须满足 0 < dt*phidotmax < pi/2。');
 
 % 轮子特征矩阵
-H_cell = cell(1,num_wheels);
+Hn = cell(1,num_wheels);
 for n = 1:num_wheels
     dx = params.wheel_pos(n,1);
     dy = params.wheel_pos(n,2);
-    H_cell{n} = [1,0,-dy; 0,1,dx];
+    Hn{n} = [1,0,-dy; 0,1,dx];
 end
 
 % RSS 原始锥约束的两个旋转矩阵
@@ -244,7 +244,7 @@ for step = 1:num_steps
 
         %% 原始约束检查
         check = check_original_constraints( ...
-            current_nu,nu_seq,H_cell,R_set, ...
+            current_nu,nu_seq,Hn,R_set, ...
             vimax,delta_theta,tol);
 
         viol.speed_max(step) = check.speed_max;
@@ -493,10 +493,10 @@ end
 
 %% 检查原始约束
 function check = check_original_constraints( ...
-    current_nu,nu_seq,H_cell,R_set, ...
+    current_nu,nu_seq,Hn,R_set, ...
     vimax,delta_theta,tol)
 
-num_wheels = numel(H_cell);
+num_wheels = numel(Hn);
 K = size(nu_seq,2);
 
 %% 轮速约束
@@ -511,7 +511,7 @@ speed_tol = tol.speed_abs + ...
 
 for k = 1:K
     for n = 1:num_wheels
-        z_curr = H_cell{n} * nu_seq(:,k);
+        z_curr = Hn{n} * nu_seq(:,k);
         speed_curr = norm(z_curr,2);
 
         if speed_curr > speed_max
@@ -539,10 +539,10 @@ cone_worst_n = NaN;
 cone_worst_i = NaN;
 
 for n = 1:num_wheels
-    z_prev = H_cell{n} * current_nu;
+    z_prev = Hn{n} * current_nu;
 
     for k = 1:K
-        z_curr = H_cell{n} * nu_seq(:,k);
+        z_curr = Hn{n} * nu_seq(:,k);
 
         for i = 1:numel(R_set)
             margin = (R_set{i} * z_prev)' * z_curr;
@@ -582,10 +582,10 @@ angle_tol = tol.angle_abs + ...
     tol.angle_rel * max(1,delta_theta);
 
 for n = 1:num_wheels
-    z_prev = H_cell{n} * current_nu;
+    z_prev = Hn{n} * current_nu;
 
     for k = 1:K
-        z_curr = H_cell{n} * nu_seq(:,k);
+        z_curr = Hn{n} * nu_seq(:,k);
 
         speed_prev = norm(z_prev,2);
         speed_curr = norm(z_curr,2);
