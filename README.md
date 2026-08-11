@@ -10,11 +10,12 @@ RSS-MPC-Comparison-Pipeline-rss_hpipm/
 ├── default_python_config.json           # Python 默认配置
 │
 ├── algorithms/                          # 算法包
-│   ├── RSS_proposed/                    # proposed 控制器 (普通目录, HPIPM dense QCQP)
-│   │   ├── control_RSS.m                #   3 次 SQP 迭代, k1=1
-│   │   ├── construct_complete_qp_from_rss.m  # QP 矩阵构造
+│   ├── RSS_proposed/                    # proposed 控制器 (普通目录, HPIPM OCP QP + SCP)
+│   │   ├── control_RSS.m                #   SCP 迭代 (warm start + 自适应收敛), k1=1
+│   │   ├── construct_ocp_qp_from_rss.m  #   OCP QP 矩阵构造 + 线性化约束
+│   │   ├── construct_complete_qp_from_rss.m  # Dense QCQP 矩阵构造 (已弃用)
 │   │   ├── config.m                     #   算法参数
-│   │   ├── hpipm_qp_solver.py           #   HPIPM Python 求解器接口
+│   │   ├── hpipm_qp_solver.py           #   HPIPM Python 求解器接口 (solve_ocp_qp / solve_qcqp)
 │   │   └── build_hpipm_windows.sh       #   Windows MSYS2 编译脚本
 │   ├── RSS_sqp/                         # → github.com/serendipitjx/RSS_sqp (submodule, main)
 │   ├── RSS_fmincon/                     # → github.com/serendipitjx/RSS_fmincon (submodule, main)
@@ -62,10 +63,24 @@ RSS-MPC-Comparison-Pipeline-rss_hpipm/
 
 | 算法 | 求解器 | 来源 | 特点 |
 |---|---|---|---|
-| proposed-3iter | HPIPM (dense QCQP) | RSS_proposed (普通目录) | RSS 凸化 + 3 次 SQP 迭代, K=6 |
+| proposed-3iter | HPIPM (OCP QP + SCP) | RSS_proposed (普通目录) | RSS 凸化 + SCP 迭代 (warm start, 自适应收敛), K=6 |
 | e-lmpc | fmincon SQP | RSS_sqp (submodule) | MaxIter=1, K=6 |
 | interior-point | fmincon interior-point | RSS_fmincon (submodule) | K=6 |
 | active-set | fmincon active-set | RSS_active_set (submodule) | K=6 |
+
+### proposed-3iter 求解策略 (OCP QP + SCP)
+
+论文 Algorithm 1 的凸子问题 (公式 17) 含二次约束 (转向锥、轮速 SOC)，本实现采用 **OCP QP + SCP 线性化** 方案求解：
+
+| 组件 | 说明 |
+|---|---|
+| `solve_ocp_qp` | HPIPM 的 `ocp_qp` IPM 求解器，处理线性化后的 QP 子问题 |
+| `construct_ocp_qp_from_rss` | 构造 OCP QP 矩阵 (A/B/Q/R/C/D/lg/ug)，二次约束通过一阶泰勒展开线性化 |
+| **Warm start** | 上一 MPC 步的 `u_full` 时域平移 1 步作为 SCP 线性化点初值 (通过 `global RSS_WARMSTART_UHAT` 传递) |
+| **首步小偏移** | 冷启动时 `u_hat = 1e-4 * ones(3,K)`，避免 `û=0` 处转向锥梯度退化为 0 |
+| **自适应收敛** | `max_iter=10`, `conv_tol=1e-6`；optval 相对变化 < 阈值即提前 break (通常 3 步收敛) |
+
+> 注：HPIPM 的 `ocp_qcqp` IPM 求解器存在 `status=3 (NAN_SOL)` 内部 bug，因此改用 `ocp_qp` + SCP 线性化。Dense QCQP 方案 (`solve_qcqp`) 保留在 `construct_complete_qp_from_rss.m` 中作为对照。
 
 ## 获取项目
 
@@ -192,4 +207,4 @@ verify_constraints_hpipm
 
 ## RSS_proposed 算法文件详解
 
-详见 [RSS_proposed_算法详解.md](RSS_proposed_算法详解.md)（含文件总览、物理量参数、`construct_complete_qp_from_rss.m` 的 H/g/A/b/Hq/gq/uq 矩阵构造逐步说明、调用逻辑、关键设计点）。
+详见 [RSS_proposed_算法详解.md](RSS_proposed_算法详解.md)（含文件总览、物理量参数、`construct_ocp_qp_from_rss.m` 的 OCP QP 矩阵构造与线性化约束说明、`construct_complete_qp_from_rss.m` 的 Dense QCQP 对照、调用逻辑、关键设计点）。

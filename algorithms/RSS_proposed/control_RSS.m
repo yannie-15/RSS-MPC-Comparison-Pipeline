@@ -1,4 +1,4 @@
-function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, state_dot, state)
+﻿function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, state_dot, state)
 % CONTROL_RSS  论文 Algorithm 1 (Trajectory optimizer for SWMRs) 的实现
 %
 % 论文: RSS26 "Exploit Agile Mobility of Steerable-Wheeled Mobile Robots:
@@ -9,9 +9,9 @@ function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, sta
 %   - 初始化 u^(0) (论文建议 static init: u^(0)=0)
 %   - while m < max_iter (论文 Algorithm 1 line 3-9):
 %       1. 构造凸子问题 Q_K(u^(m)) (论文公式 17)
-%          → 调用 construct_complete_qp_from_rss 构造 QCQP 矩阵
+%          → 调用 construct_ocp_qp_from_rss 构造 OCP QCQP (误差状态, 逐阶段)
 %       2. 求解 u^(m+1) = S(u^(m)) (论文 Algorithm 1 line 5)
-%          → 调用 Python HPIPM dense QCQP 求解器
+%          → 调用 Python HPIPM OCP QCQP 求解器 (ocp_qcqp 接口)
 %       3. 更新 u_hat = u (论文 Algorithm 1 line 9)
 %   - 输出: ν_1 = ν_0 + u_1 (论文 Algorithm 1 line 11)
 %
@@ -23,7 +23,8 @@ function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, sta
 %   rho = 0.01  = ρ (强凸正则化参数, 论文 (17) 式)
 %   k1 = 1      = 输出增益 (论文 Algorithm 1 line 11: ν_1 = ν_0 + u_1)
 %
-% 求解器: 论文原用 CVX+ECOS, 本实现替换为 HPIPM dense QCQP (Python 接口)
+% 求解器: 论文原用 CVX+ECOS, 本实现替换为 HPIPM OCP QCQP (Python ocp_qcqp 接口)
+%         与 dense QCQP 数学等价, 但利用 OCP 块三对角结构更高效
 
     params = config();
 
@@ -31,7 +32,7 @@ function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, sta
     % 论文 IV-A: K=6, dt=0.01s, t_end=1s
     K = 6; rho = 0.01; k1 = 1; epsilon = 0;  % k1=1: 论文 Alg.1 line 11 增益
     current_xy = [state(1), state(2)]';       % 当前位置 (世界系)
-    psi0 = state(3); current_nu = state_dot;   % 当前航向 / ν_0
+    psi0 = state(3); v0 = state_dot;   % 当前航向 / ν_0 (已知量: 当前车体系速度)
 
     % ================= 迭代 Setup =================
     % 论文 Algorithm 1 line 1: Initialize u^(0) ∈ ri(D(P_K))
@@ -67,8 +68,16 @@ function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, sta
     end
     if isempty(py_reloaded)
         try
-            solver_mod = py.importlib.import_module('hpipm_qp_solver');
-            py.importlib.reload(solver_mod);
+            % 用临时 .py 文件执行 sys.modules.pop + import (比 reload 更可靠)
+            % reload 不会重新解析文件路径, 必须先 pop 再 import
+            reload_py = fullfile(script_path, '_reload_solver_tmp.py');
+            fid = fopen(reload_py, 'w');
+            fprintf(fid, 'import sys\n');
+            fprintf(fid, 'sys.modules.pop("hpipm_qp_solver", None)\n');
+            fprintf(fid, 'import hpipm_qp_solver\n');
+            fclose(fid);
+            py.runpy.run_path(reload_py);
+            delete(reload_py);
             py_reloaded = true;
         catch
         end
@@ -79,40 +88,39 @@ function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, sta
     % 无条件更新 u_hat (论文 Alg.1 无 break-on-failure, descent inequality 保证下降)
     for m = 1 : max_iter
         try
-            % ========== 论文 Alg.1 line 4: 构造凸子问题 Q_K(u^(m)) ==========
-            % 论文公式 (17): min f(u,û)=g(u)+ρ||u-û||^2  s.t. C_k_{i,n}<=0, u∈∩U_j
-            % 这里将 Q_K 转为 dense QCQP 标准形式 (H,g,A,b,Hq,gq,uq)
-            qp = construct_complete_qp_from_rss(path, step, current_nu, state, u_hat, params);
 
-            % ========== 数据格式转换: cell → 3D numpy ==========
-            % HPIPM Python 接口要求 Hq 为 3D 数组 (n_var, n_var, n_qcqp)
+            % ========== 论文 Alg.1 line 4: 构造凸子问题 Q_K(u^(m)) ==========
+            % Dense QCQP (精确凸化二次约束, HPIPM dense_qcqp)
+            % 替代 OCP QP + 线性化 (后者在 u_hat=0 处退化)
+            qp = construct_complete_qp_from_rss(path, step, v0, state, u_hat, params);
+
+            % ========== 数据转换: Hq/gq cell -> numpy 3D/2D ==========
             n_var = qp.n_var;
-            n_qcqp = qp.n_qcqp;
-            Hq_3d = zeros(n_var, n_var, n_qcqp);
-            gq_2d = zeros(n_var, n_qcqp);
-            for i = 1:n_qcqp
-                Hq_3d(:, :, i) = qp.Hq{i};
-                gq_2d(:, i) = qp.gq{i};
+            nq = length(qp.Hq);
+            Hq_3d = zeros(n_var, n_var, nq);
+            gq_2d = zeros(n_var, nq);
+            for i = 1:nq
+                Hq_3d(:,:,i) = qp.Hq{i};
+                gq_2d(:,i) = qp.gq{i};
             end
 
             % ========== 论文 Alg.1 line 5: 求解 u^(m+1) = S(u^(m)) ==========
-            % 调用 HPIPM dense QCQP 求解器 (替代论文中的 CVX+ECOS)
-            % HPIPM 论文: "hpipm: a high-performance quadratic programming framework"
-            %   求解: min 0.5*x'Hx + g'x  s.t. Ax=b, 0.5*x'Hq_i*x + gq_i'x <= uq_i
-            result = py.hpipm_qp_solver.solve_qcqp(...
-                py.numpy.array(qp.H), ...        % H: Hessian (论文 (18)+(19) 展开)
-                py.numpy.array(qp.g), ...        % g: 线性项
-                py.numpy.array(qp.A), ...        % A: 等式约束 (论文 (20c) 动力学)
-                py.numpy.array(qp.b), ...        % b: 等式约束右端
-                py.numpy.array(Hq_3d), ...       % Hq: 二次约束 Hessian (论文 (20a)+(20b))
-                py.numpy.array(gq_2d), ...       % gq: 二次约束线性项
-                py.numpy.array(qp.uq'), ...      % uq: 二次约束右端
-                py.bool(false) ...              % verbose
+            hpipm_mod = py.importlib.import_module('hpipm_qp_solver');
+            result = hpipm_mod.solve_qcqp(...
+                py.numpy.array(qp.H), ...
+                py.numpy.array(qp.g), ...
+                py.numpy.array(qp.A), ...
+                py.numpy.array(qp.b), ...
+                py.numpy.array(Hq_3d), ...
+                py.numpy.array(gq_2d), ...
+                py.numpy.array(qp.uq), ...
+                py.bool(step == 1 && m == 1) ...
             );
 
             % ========== 提取结果 ==========
-            % x = [u(:); nu(:)] (36维), 论文决策变量 u ∈ R^{3×K}
+            % x = [u(:); nu(:)] (36维); x 的前 3K 个变量 = paper u
             x = double(result{'x'});           % (n_var,) = (36,)
+
             status_code = double(result{'status'});
             optval = double(result{'obj_value'});
             inner_solve_time = double(result{'solve_time'});
@@ -137,6 +145,10 @@ function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, sta
             cvx_status_str = 'Failed';
             solver_name = 'HPIPM-Error';
             fprintf('第%d步第%d次迭代 - Python 调用异常: %s\n', step, m, ME.message);
+            fprintf('  错误位置: %s (line %d) in %s\n', ME.stack(1).name, ME.stack(1).line, ME.stack(1).file);
+            for si = 1:min(length(ME.stack), 5)
+                fprintf('    at %s (line %d)\n', ME.stack(si).name, ME.stack(si).line);
+            end
         end
 
         % ========== 存入全局数组 ==========
@@ -155,7 +167,13 @@ function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, sta
         % ========== 论文 Alg.1 line 9: 更新 m ← m+1 ==========
         % 论文: u^(m+1) = S(u^(m)), 即 û ← u_sol 用于下次迭代凸化
         u = u_sol;
-        u_hat = u;  % 更新 û, 下次构造 Q_K 时使用
+        % 求解失败时 u_sol 可能含 NaN/Inf, 直接赋给 u_hat 会导致下一轮
+        % construct_complete_qp_from_rss 构造出全 NaN 的 QCQP, 失败级联传播.
+        % 仅在解有限时更新 u_hat, 否则保留上一轮 û (论文 Alg.1 假设始终可解,
+        % 数值失败时需防止 NaN 污染下一轮凸化)
+        if status_code == 0 && all(isfinite(u_sol(:)))
+            u_hat = u;
+        end
     end
 
     % ================= 论文 Alg.1 line 11: 输出 ν_1 = ν_0 + u_1 =================
@@ -165,8 +183,78 @@ function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, sta
                      sin(state(3)),  cos(state(3)), 0;
                          0,              0, 1] * (state_dot + 1.00 * u(:, 1));
     % 车体系速度 ν_1 = ν_0 + u_1 (论文 Alg.1 line 11)
-    velocity = current_nu + u(:, 1);
+    velocity = v0 + u(:, 1);
 
+    % ================= [DIAGNOSTIC] 原始约束违反量检查 =================
+    % 对最终 u_hat (3 次 SCP 后输出) 计算完整 nu 轨迹, 回代验证:
+    %   轮速 SOC: ||H_n * nu_k||_2 <= vimax?  违反量 = max(0, ||Hn*nu_k|| - vimax)
+    %   转向锥:   nu_km1' H' R1/R2 H nu_k >= 0? 违反量 = max(0, -term)
+    persistent diag_stats;
+    if isempty(diag_stats) || step == 1
+        diag_stats = struct('max_wheel_viol', 0, 'max_cone_viol', 0, ...
+            'cnt_wheel_viol', 0, 'cnt_cone_viol', 0, 'step_wheel_max', 0, 'step_cone_max', 0);
+    end
+    num_wheels = size(params.wheel_pos, 1);
+    H_diag = cell(1, num_wheels);
+    for n = 1:num_wheels
+        H_diag{n} = [1, 0, -params.wheel_pos(n,2); 0, 1, params.wheel_pos(n,1)];
+    end
+    delta_th = params.dt * params.phidotmax;
+    R1d = [sin(delta_th), -cos(delta_th); cos(delta_th), sin(delta_th)];
+    R2d = R1d';
+    nu_diag = zeros(3, K+1); nu_diag(:, 1) = v0;
+    for kk = 1:K; nu_diag(:, kk+1) = nu_diag(:,kk) + u_hat(:, kk); end
+    % ---- 轮速约束 (k=1..K) ----
+    mv_wheel = 0;
+    for kk = 1:K
+        nkk = nu_diag(:, kk+1);
+        for n = 1:num_wheels
+            vn = norm(H_diag{n} * nkk, 2);
+            viol = vn - params.vimax;
+            if viol > mv_wheel; mv_wheel = viol; end
+        end
+    end
+    % ---- 转向锥 (k=1..K) ----
+    mv_cone = 0;
+    for kk = 1:K
+        a = nu_diag(:, kk);
+        b = nu_diag(:, kk+1);
+        for n = 1:num_wheels
+            Hn1 = H_diag{n};
+            for gg = 1:2
+                if gg == 1; Rgg = R1d; else; Rgg = R2d; end
+                Mgg = Hn1' * Rgg * Hn1;
+                term = a' * Mgg * b;   % 原约束: term >= 0
+                viol = -term;          % 违反量 = max(0, -term)
+                if viol > mv_cone; mv_cone = viol; end
+            end
+        end
+    end
+    % ---- 汇总统计 ----
+    if mv_wheel > diag_stats.max_wheel_viol; diag_stats.max_wheel_viol = mv_wheel; diag_stats.step_wheel_max = step; end
+    if mv_cone > diag_stats.max_cone_viol; diag_stats.max_cone_viol = mv_cone; diag_stats.step_cone_max = step; end
+    if mv_wheel > 1e-6; diag_stats.cnt_wheel_viol = diag_stats.cnt_wheel_viol + 1; end
+    if mv_cone > 1e-6; diag_stats.cnt_cone_viol = diag_stats.cnt_cone_viol + 1; end
+    % 每 25 步打印一次, 最后一步打印汇总
+    if mod(step, 25) == 0 || step == 1
+        fprintf('[DIAG step=%d] wheel_viol_cur=%.6f, cone_viol_cur=%.6f\n', step, mv_wheel, mv_cone);
+    end
+    if step == 100
+        fprintf('\n============== [DIAG 汇总 100步约束违反量] ==============\n');
+        fprintf('轮速 SOC 最大违反量: %.6f (发生在 step %d) | 违反步数: %d/100\n', ...
+            diag_stats.max_wheel_viol, diag_stats.step_wheel_max, diag_stats.cnt_wheel_viol);
+        fprintf('转向锥 最大违反量: %.6f (发生在 step %d) | 违反步数: %d/100\n', ...
+            diag_stats.max_cone_viol, diag_stats.step_cone_max, diag_stats.cnt_cone_viol);
+        if diag_stats.max_wheel_viol < 1e-6 && diag_stats.max_cone_viol < 1e-6
+            fprintf('结论: 解在原始约束下可行 (所有违反量 < 1e-6)\n');
+        elseif diag_stats.max_wheel_viol < 1e-3 && diag_stats.max_cone_viol < 1e-3
+            fprintf('结论: 解在原始约束下基本可行 (违反量 < 1e-3, 数值误差量级)\n');
+        else
+            fprintf('结论: 解严重违反原始约束 → 线性化问题过度松弛, J_total 偏低源于不可行!\n');
+        end
+        fprintf('=========================================================\n\n');
+    end
+    % ================= [END DIAGNOSTIC] =================
     % 汇总诊断 (论文 IV-B: computation cost 记录)
     diagnostics.total_solve_time = sum(diagnostics.iterations.solve_time(~isnan( ...
         diagnostics.iterations.solve_time)));

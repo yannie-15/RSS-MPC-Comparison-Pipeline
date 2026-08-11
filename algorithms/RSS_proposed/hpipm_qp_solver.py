@@ -87,6 +87,35 @@ except Exception as _e:
     _HPIPM_OK = False
     _HPIPM_ERR = str(_e)
 
+# 导入 HPIPM OCP QCQP 接口类 (对应 HPIPM ocp_qcqp 逐阶段数据结构)
+try:
+    from hpipm_python import (
+        hpipm_ocp_qcqp_dim,         # OCP 维度对象 (N, nx, nu, nbx, ng, nq)
+        hpipm_ocp_qcqp,             # OCP QCQP 问题数据 (A, B, b, Q, S, R, q, r, Qq, Sq, Rq, qq, rq, uq)
+        hpipm_ocp_qcqp_sol,         # OCP 解对象 (存储 x, u 逐阶段)
+        hpipm_ocp_qcqp_solver_arg,  # OCP 求解器参数 (mode, tol, iter_max)
+        hpipm_ocp_qcqp_solver,      # OCP 求解器对象 (solve 方法)
+    )
+    _HPIPM_OCP_OK = True
+except Exception as _e:
+    _HPIPM_OCP_OK = False
+    _HPIPM_OCP_ERR = str(_e)
+
+# 导入 HPIPM OCP QP 接口类 (线性约束, 对应 ocp_qp 逐阶段数据结构)
+# 用于替代 ocp_qcqp (OCP QCQP solver 存在 bug 导致 status=3 NAN_SOL)
+try:
+    from hpipm_python import (
+        hpipm_ocp_qp_dim,           # OCP QP 维度对象 (N, nx, nu, nbx, ng, nbu, ns)
+        hpipm_ocp_qp,               # OCP QP 问题数据 (A, B, b, Q, S, R, q, r, C, D, lg, ug)
+        hpipm_ocp_qp_sol,           # OCP QP 解对象 (存储 x, u 逐阶段)
+        hpipm_ocp_qp_solver_arg,    # OCP QP 求解器参数 (mode, tol, iter_max)
+        hpipm_ocp_qp_solver,        # OCP QP 求解器对象 (solve 方法)
+    )
+    _HPIPM_OCP_QP_OK = True
+except Exception as _e:
+    _HPIPM_OCP_QP_OK = False
+    _HPIPM_OCP_QP_ERR = str(_e)
+
 
 def solve_qcqp(H, g, A, b, Hq, gq, uq, verbose=False):
     """
@@ -240,6 +269,599 @@ def solve_qcqp(H, g, A, b, Hq, gq, uq, verbose=False):
         'status': status,      # 0=成功
         'status_str': status_str,
         'obj_value': obj_value,
+        'solve_time': float(solve_time),
+        'iters': iters,
+    }
+
+
+def solve_ocp_qcqp(A, B, Q_eff, R_eff, b_stack, r_stack,
+                   nx_arr, nu_arr, nq_arr, nbx_arr, nq_per_stage,
+                   Qq_stack, Sq_stack, Rq_stack, qq_stack, rq_stack, uq_stack,
+                   x0, idxbx, const=0.0, verbose=False):
+    """
+    求解 OCP QCQP (HPIPM ocp_qcqp 接口, 逐阶段结构).
+
+    与 solve_qcqp (dense QCQP) 数学等价, 但利用 OCP 块三对角结构, 更高效.
+
+    HPIPM OCP QCQP 标准形式 (每 stage n=0..N):
+        动力学:  x_{n+1} = A_n x_n + B_n u_n + b_n      (n=0..N-1)
+        代价:    min Σ_{n=0}^{N-1} [0.5 x'Qx + x'S'u + 0.5 u'Ru + q'x + r'u] + 0.5 x_N'Q_N x_N + q_N'x_N
+        二次约束(每 stage nq 条): 0.5 v'Qq v + v'Sq'u + 0.5 u'Rq u + qq'v + rq'u <= uq
+        box 约束: lbx <= x[idxbx] <= ubx
+
+    ×2 约定 (与 construct_ocp_qp_from_rss.m 一致):
+        Q_eff, R_eff, r, Qq, Sq, Rq, qq, rq 构造时已×2; HPIPM 的 0.5 前缀使其还原为原始系数.
+        uq, const 不×2.
+
+    参数 (均可为 numpy 数组或 MATLAB py.numpy.array 传入):
+        A, B        : 动力学矩阵 (常数, 所有 stage 相同)
+                      A: (nx, nx), B: (nx, nu)
+        Q_eff       : (nx, nx) 状态代价 Hessian (已×2, 所有 stage 相同, 含终端)
+        R_eff       : (nu, nu) 控制代价 Hessian (已×2, 含 R+rho*I)
+        b_stack     : (nx, K) 动力学 bias, 每列一个 stage (n=0..K-1)
+        r_stack     : (nu, K) 控制线性项, 每列一个 stage (已×2)
+        nx_arr      : (N_stages,) int, 每 stage 状态维数
+        nu_arr      : (N_stages,) int, 每 stage 控制维数
+        nq_arr      : (N_stages,) int, 每 stage 二次约束数 (dim 用, = nq_per_stage)
+        nbx_arr     : (N_stages,) int, 每 stage box 约束数
+        nq_per_stage: (N_stages,) int, 每 stage 实际非空二次约束数
+        Qq_stack    : (nx, nx, total_qcqp) 3D, 按 stage 顺序排列所有约束的状态二次项
+        Sq_stack    : (nx, nu, total_qcqp) 3D, 状态-控制交叉 (MATLAB 约定 nx×nu, 内部转置为 nu×nx)
+        Rq_stack    : (nu, nu, total_qcqp) 3D, 控制二次项
+        qq_stack    : (nx, total_qcqp) 2D, 状态线性项
+        rq_stack    : (nu, total_qcqp) 2D, 控制线性项
+        uq_stack    : (total_qcqp,) 1D, 约束上界 (不×2)
+        x0          : (nx,) 初始状态 (box bounds: lbx=ubx=x0)
+        idxbx       : (nbx[0],) int, box 约束索引 (0-indexed, 索引 x 内位置)
+        const       : float, 常数项 (不×2, 仅用于 obj 比较)
+
+    返回 dict (与 solve_qcqp 兼容, 便于 control_RSS.m 复用):
+        x          : (36,) [u(:); nu(:)], u 为控制序列, nu 为速度序列
+        status     : int      0=成功
+        status_str : str
+        obj_value  : float    目标函数值
+        solve_time : float    求解耗时 (秒)
+        iters      : int      迭代次数
+    """
+    if not _HPIPM_OCP_OK:
+        raise RuntimeError(
+            f"HPIPM OCP QCQP 不可用: {_HPIPM_OCP_ERR}\n\n"
+            "需要 HPIPM 编译时启用 OCP QCQP 支持 (d_ocp_qcqp_* 符号)."
+        )
+
+    # === 统一转为 numpy float64 / int32 ===
+    A = np.asarray(A, dtype=np.float64)
+    B = np.asarray(B, dtype=np.float64)
+    Q_eff = np.asarray(Q_eff, dtype=np.float64)
+    R_eff = np.asarray(R_eff, dtype=np.float64)
+    b_stack = np.asarray(b_stack, dtype=np.float64)
+    r_stack = np.asarray(r_stack, dtype=np.float64)
+    nx_arr = np.asarray(nx_arr, dtype=np.int32).flatten()
+    nu_arr = np.asarray(nu_arr, dtype=np.int32).flatten()
+    nq_arr = np.asarray(nq_arr, dtype=np.int32).flatten()
+    nbx_arr = np.asarray(nbx_arr, dtype=np.int32).flatten()
+    nq_per_stage = np.asarray(nq_per_stage, dtype=np.int32).flatten()
+    Qq_stack = np.asarray(Qq_stack, dtype=np.float64)
+    Sq_stack = np.asarray(Sq_stack, dtype=np.float64)
+    Rq_stack = np.asarray(Rq_stack, dtype=np.float64)
+    qq_stack = np.asarray(qq_stack, dtype=np.float64)
+    rq_stack = np.asarray(rq_stack, dtype=np.float64)
+    uq_stack = np.asarray(uq_stack, dtype=np.float64).flatten()
+    x0 = np.asarray(x0, dtype=np.float64).flatten()
+    idxbx = np.asarray(idxbx, dtype=np.int32).flatten()
+
+    K = b_stack.shape[1]                  # horizon (=6)
+    N_stages = K + 1                      # n=0..K
+    nx0 = int(nx_arr[0])                  # 6
+    nu0 = int(nu_arr[0])                  # 3
+
+    # === HPIPM 维度设置 ===
+    dim = hpipm_ocp_qcqp_dim(K)           # N=K (horizon)
+    for s in range(N_stages):
+        dim.set('nx', int(nx_arr[s]), s)
+        dim.set('nu', int(nu_arr[s]), s)
+        dim.set('nbx', int(nbx_arr[s]), s)
+        dim.set('nq', int(nq_arr[s]), s)
+        # ng=0, ns=0 (默认, 无一般线性/软约束)
+
+    # === HPIPM OCP QCQP 数据设置 (逐 stage) ===
+    qp = hpipm_ocp_qcqp(dim)
+
+    # 动力学 (n=0..K-1): A, B, b
+    for n in range(K):
+        qp.set('A', A, n)
+        qp.set('B', B, n)
+        qp.set('b', b_stack[:, n], n)
+
+    # 代价 (n=0..K): Q, q=0; (n=0..K-1): R, r, S=0; 终端 n=K: 仅 Q, q
+    q_zero = np.zeros(nx0)
+    S_zero = np.zeros((nu0, nx0))         # HPIPM S 是 (nu, nx)
+    for n in range(N_stages):
+        qp.set('Q', Q_eff, n)
+        qp.set('q', q_zero, n)
+        if n < K:
+            qp.set('R', R_eff, n)
+            qp.set('r', r_stack[:, n], n)
+            qp.set('S', S_zero, n)
+
+    # 二次约束 (逐 stage 堆叠后 set)
+    offset = 0
+    for s in range(N_stages):
+        nq_s = int(nq_per_stage[s])
+        if nq_s > 0:
+            nx_s = int(nx_arr[s])
+            nu_s = int(nu_arr[s])
+            # Qq: 水平堆叠 (nx, nx*nq_s) — 维度仅依赖 nx_s, 不受 nu_s 影响
+            Qq_s = np.hstack([Qq_stack[:, :, offset + j] for j in range(nq_s)])
+            # qq: 列堆叠 (nx, nq_s) — 同上
+            qq_s = np.column_stack([qq_stack[:, offset + j] for j in range(nq_s)])
+            # uq: (nq_s,) 向量
+            uq_s = uq_stack[offset:offset + nq_s]
+            qp.set('Qq', Qq_s, s)
+            qp.set('qq', qq_s, s)
+            qp.set('uq', uq_s, s)
+            # Sq/Rq/rq 维度依赖 nu_s: 终端 stage nu_s=0 时必须传 0 行数组,
+            # 否则 (3, ...) 与 HPIPM 期望的 (0, ...) 不匹配 → 堆缓冲区溢出 → NaN/Inf
+            if nu_s > 0:
+                # Sq: HPIPM C 层 OCP_QCQP_SET_SQ 用 CVT_TRAN_MAT2STRMAT(=blasfeo_pack_tran_dmat)
+                #     读取列优先 (nu, nx) 矩阵, 转置后存入 Hq 下左块 (nx, nu)
+                # Python wrapper 用 np.ravel('F') 列优先展开
+                # 需传入 (nu, nx*nq_s) 数组, 使 ravel('F') = 列优先 (nu, nx*nq_s)
+                #     = 每约束 nu*nx 元素的列优先 (nu, nx) 布局 = C 期望格式
+                # Sq_stack 是 (nx, nu, nq) [MATLAB (nx,nu) 约定], 需先转置为 (nu, nx, nq) 再 reshape
+                Sq_s = np.transpose(Sq_stack[:, :, offset:offset + nq_s], (1, 0, 2)).reshape((nu_s, nx_s * nq_s), order='F')
+                # Rq: (nu, nu) 对称, 'F' ravel 的 nu 元素组 = C 行优先 nu 元素组 (对称阵等价)
+                Rq_s = np.hstack([Rq_stack[:, :, offset + j] for j in range(nq_s)])
+                # rq: (nu, nq_s) 列堆叠, 'F' ravel = [c0(nu), c1(nu), ...] = C 期望
+                rq_s = np.column_stack([rq_stack[:, offset + j] for j in range(nq_s)])
+                qp.set('Sq', Sq_s, s)
+                qp.set('Rq', Rq_s, s)
+                qp.set('rq', rq_s, s)
+            else:
+                # 终端 stage (nu=0): 传 0 行数组, 维度与 HPIPM 期望 (nu=0) 一致
+                qp.set('Sq', np.zeros((0, nx_s * nq_s)), s)
+                qp.set('Rq', np.zeros((0, 0)), s)
+                qp.set('rq', np.zeros((0, nq_s)), s)
+        offset += nq_s
+
+    # 初始状态 box 约束 (stage 0: lbx=ubx=x0, idxbx=0..5)
+    if int(nbx_arr[0]) > 0:
+        qp.set('idxbx', idxbx, 0)
+        qp.set('lbx', x0, 0)
+        qp.set('ubx', x0, 0)
+
+    # === 诊断: 打印维度信息 (临时, 用于排查 status=3) ===
+    if verbose:
+        print(f"\n[hpipm_diag] K={K}, N_stages={N_stages}", file=sys.stderr)
+        print(f"[hpipm_diag] nx_arr={nx_arr.tolist()}", file=sys.stderr)
+        print(f"[hpipm_diag] nu_arr={nu_arr.tolist()}", file=sys.stderr)
+        print(f"[hpipm_diag] nq_arr={nq_arr.tolist()}", file=sys.stderr)
+        print(f"[hpipm_diag] nbx_arr={nbx_arr.tolist()}", file=sys.stderr)
+        print(f"[hpipm_diag] nq_per_stage={nq_per_stage.tolist()}", file=sys.stderr)
+        print(f"[hpipm_diag] total_qcqp={int(nq_per_stage.sum())}", file=sys.stderr)
+        # 检查数据有限性
+        for name, arr in [('A', A), ('B', B), ('Q_eff', Q_eff), ('R_eff', R_eff),
+                          ('b_stack', b_stack), ('r_stack', r_stack),
+                          ('x0', x0), ('Qq_stack', Qq_stack), ('Sq_stack', Sq_stack),
+                          ('Rq_stack', Rq_stack), ('qq_stack', qq_stack),
+                          ('rq_stack', rq_stack), ('uq_stack', uq_stack)]:
+            if not np.all(np.isfinite(arr)):
+                print(f"[hpipm_diag] !!! {name} contains NaN/Inf !!!", file=sys.stderr)
+        print(f"[hpipm_diag] uq_stack={uq_stack}", file=sys.stderr)
+        # 检查每个约束在 x=0, u=0 处的值: 应为 0 <= uq (uq>0 时可行)
+        # 约束形式: 0.5*x'Qq*x + ... + qq'x + rq'u <= uq
+        # 在 x=0, u=0 处: 0 <= uq, 所以 uq 必须 >= 0
+        neg_uq = np.where(uq_stack < 0)[0]
+        if len(neg_uq) > 0:
+            print(f"[hpipm_diag] !!! uq_stack 有 {len(neg_uq)} 个负值: 索引 {neg_uq.tolist()}", file=sys.stderr)
+        else:
+            print(f"[hpipm_diag] uq_stack 全部 >= 0 (约束在原点可行)", file=sys.stderr)
+        # 手动验证 stage 0 约束 0 在 x=x0, u=0 处的约束值
+        # 约束形式: 0.5*x'Qq*x + x'Sq'u + 0.5*u'Rq*u + qq'x + rq'u <= uq
+        # stage 0: x=x0 (固定), u=0
+        s = 0
+        nq_s0 = int(nq_per_stage[s])
+        nx_s0 = int(nx_arr[s])
+        nu_s0 = int(nu_arr[s])
+        if nq_s0 > 0:
+            print(f"[hpipm_diag] --- stage 0 约束验证 (x=x0, u=0) ---", file=sys.stderr)
+            for j in range(min(nq_s0, 4)):  # 只打印前 4 条
+                Qq_j = Qq_stack[:, :, j]
+                qq_j = qq_stack[:, j]
+                uq_j = uq_stack[j]
+                # x=x0, u=0
+                val_x = 0.5 * x0 @ Qq_j @ x0 + qq_j @ x0
+                print(f"[hpipm_diag]   约束 {j}: 0.5*x0'Qq*x0 + qq'x0 = {val_x:.6e}, uq = {uq_j:.6e}, 违反量 = {val_x - uq_j:.6e}", file=sys.stderr)
+        # 验证 stage 1 (有 u) 约束 0 在 x=0, u=0
+        s = 1
+        nq_s1 = int(nq_per_stage[s])
+        if nq_s1 > 0:
+            print(f"[hpipm_diag] --- stage 1 约束验证 (x=0, u=0) ---", file=sys.stderr)
+            offset1 = int(nq_per_stage[0])
+            for j in range(min(nq_s1, 4)):
+                Qq_j = Qq_stack[:, :, offset1 + j]
+                Rq_j = Rq_stack[:, :, offset1 + j]
+                uq_j = uq_stack[offset1 + j]
+                # x=0, u=0
+                val = 0.0  # 所有项为 0
+                print(f"[hpipm_diag]   约束 {j}: val(0,0)=0, uq = {uq_j:.6e}, Qq PSD eigvals = {np.linalg.eigvalsh(Qq_j).min():.3e}/{np.linalg.eigvalsh(Qq_j).max():.3e}, Rq PSD eigvals = {np.linalg.eigvalsh(Rq_j).min():.3e}/{np.linalg.eigvalsh(Rq_j).max():.3e}", file=sys.stderr)
+        # 打印 HPIPM 内部结构到文件 (避免被 MATLAB 吞掉)
+        try:
+            with open('hpipm_struct_dump.txt', 'w') as f:
+                import io
+                from contextlib import redirect_stdout
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    qp.print_C_struct()
+                f.write(buf.getvalue())
+            print(f"[hpipm_diag] HPIPM C struct 已写入 hpipm_struct_dump.txt", file=sys.stderr)
+        except Exception as e:
+            print(f"[hpipm_diag] print_C_struct 失败: {e}", file=sys.stderr)
+
+    # === 求解 ===
+    qp_sol = hpipm_ocp_qcqp_sol(dim)
+
+    # balance 模式 + tol=1e-6 + iter_max=300
+    arg = hpipm_ocp_qcqp_solver_arg(dim, 'balance')
+    arg.set('iter_max', 300)
+    arg.set('tol_stat', 1e-6)
+    arg.set('tol_eq', 1e-6)
+    arg.set('tol_ineq', 1e-6)
+    arg.set('tol_comp', 1e-6)
+
+    solver = hpipm_ocp_qcqp_solver(dim, arg)
+    t0 = time.time()
+    solver.solve(qp, qp_sol)
+    solve_time = time.time() - t0
+
+    status = int(solver.get('status'))
+    iters = int(solver.get('iter'))
+    if verbose:
+        print(f"[hpipm_diag] status={status}, iters={iters}", file=sys.stderr)
+
+    # 提取解: u_n (n=0..K-1), x_n (n=0..K)
+    u_list = []
+    x_list = []
+    for n in range(N_stages):
+        x_n = np.asarray(qp_sol.get('x', n)).flatten()
+        x_list.append(x_n)
+        if n < K:
+            u_n = np.asarray(qp_sol.get('u', n)).flatten()
+            u_list.append(u_n)
+
+    # 拼成 36 维 [u(:); nu(:)] 兼容 control_RSS.m 的提取逻辑
+    # u_n (n=0..K-1) = 论文 u_{n+1} (k=1..K), 列顺序对齐
+    u_flat = np.concatenate(u_list) if u_list else np.zeros(0)   # 18 维
+    # nu (速度序列): x_k 后 3 维 (k=1..K), 即 v_k
+    nu_flat = np.concatenate([x_list[k][3:6] for k in range(1, N_stages)])  # 18 维
+    x_out = np.concatenate([u_flat, nu_flat])
+
+    # 手动计算 obj_value (Q_eff, R_eff, r 已×2; 0.5 前缀还原)
+    obj_value = const
+    for n in range(N_stages):
+        xn = x_list[n]
+        obj_value += 0.5 * float(xn @ Q_eff @ xn)     # 状态代价 (已×2 → 0.5*2=1)
+        if n < K:
+            un = u_list[n]
+            obj_value += 0.5 * float(un @ R_eff @ un)  # 控制代价
+            obj_value += float(r_stack[:, n] @ un)      # 控制线性项 (已×2)
+
+    # balance 失败回退 robust
+    if status != 0:
+        if verbose:
+            print(f"[hpipm_ocp] balance 失败 (status={status}), 重试 robust...", file=sys.stderr)
+        arg2 = hpipm_ocp_qcqp_solver_arg(dim, 'robust')
+        arg2.set('iter_max', 500)
+        arg2.set('tol_stat', 1e-6)
+        arg2.set('tol_eq', 1e-6)
+        arg2.set('tol_ineq', 1e-6)
+        arg2.set('tol_comp', 1e-6)
+        solver2 = hpipm_ocp_qcqp_solver(dim, arg2)
+        t1 = time.time()
+        solver2.solve(qp, qp_sol)
+        solve_time += time.time() - t1
+        status = int(solver2.get('status'))
+        iters = int(solver2.get('iter'))
+        # 重新提取解
+        u_list = []
+        x_list = []
+        for n in range(N_stages):
+            x_n = np.asarray(qp_sol.get('x', n)).flatten()
+            x_list.append(x_n)
+            if n < K:
+                u_n = np.asarray(qp_sol.get('u', n)).flatten()
+                u_list.append(u_n)
+        u_flat = np.concatenate(u_list) if u_list else np.zeros(0)
+        nu_flat = np.concatenate([x_list[k][3:6] for k in range(1, N_stages)])
+        x_out = np.concatenate([u_flat, nu_flat])
+        obj_value = const
+        for n in range(N_stages):
+            xn = x_list[n]
+            obj_value += 0.5 * float(xn @ Q_eff @ xn)
+            if n < K:
+                un = u_list[n]
+                obj_value += 0.5 * float(un @ R_eff @ un)
+                obj_value += float(r_stack[:, n] @ un)
+
+    status_str = 'Solved' if status == 0 else f'Failed({status})'
+
+    return {
+        'x': x_out,                 # (36,) [u(:); nu(:)]
+        'status': status,           # 0=成功
+        'status_str': status_str,
+        'obj_value': float(obj_value),
+        'solve_time': float(solve_time),
+        'iters': iters,
+    }
+
+
+def solve_ocp_qp(A, B, Q_eff, R_eff, b_stack, r_stack,
+                 nx_arr, nu_arr, ng_arr, nbx_arr, ng_per_stage,
+                 Cmat_stack, Dmat_stack, lg_stack, ug_stack,
+                 x0, idxbx, const=0.0, verbose=False):
+    """
+    求解 OCP QP (HPIPM ocp_qp 接口, 一般线性约束).
+
+    用于替代 solve_ocp_qcqp — HPIPM OCP QCQP IPM solver (d_ocp_qcqp_ipm_solve)
+    存在 bug 导致 status=3 (NAN_SOL), 而 OCP QP 接口工作正常.
+    二次约束在 MATLAB 端 (construct_ocp_qp_from_rss.m) 做一阶泰勒线性化,
+    转为一般线性约束 lg <= C*x + D*u <= ug.
+    外层 SCP 迭代 (control_RSS.m 中 m=1..3) 保证收敛到原二次约束的解.
+
+    HPIPM OCP QP 标准形式 (每 stage n=0..N):
+        动力学:  x_{n+1} = A_n x_n + B_n u_n + b_n      (n=0..N-1)
+        代价:    min Σ [0.5 x'Qx + 0.5 u'Ru + r'u] + 0.5 x_N'Q_N x_N
+        一般线性约束 (每 stage ng 条): lg <= C*x + D*u <= ug
+        box 约束: lbx <= x[idxbx] <= ubx
+
+    ×2 约定 (与 construct_ocp_qp_from_rss.m 一致):
+        Q_eff, R_eff, r 构造时已×2; HPIPM 的 0.5 前缀使其还原为原始系数.
+        C, D, lg, ug, const 不×2 (线性约束和常数项无 1/2 前缀).
+
+    参数 (均可为 numpy 数组或 MATLAB py.numpy.array 传入):
+        A, B        : 动力学矩阵 (常数, 所有 stage 相同)
+                      A: (nx, nx), B: (nx, nu)
+        Q_eff       : (nx, nx) 状态代价 Hessian (已×2, 所有 stage 相同, 含终端)
+        R_eff       : (nu, nu) 控制代价 Hessian (已×2, 含 R+rho*I)
+        b_stack     : (nx, K) 动力学 bias, 每列一个 stage (n=0..K-1)
+        r_stack     : (nu, K) 控制线性项, 每列一个 stage (已×2)
+        nx_arr      : (N_stages,) int, 每 stage 状态维数
+        nu_arr      : (N_stages,) int, 每 stage 控制维数
+        ng_arr      : (N_stages,) int, 每 stage 一般线性约束数 (dim 用)
+        nbx_arr     : (N_stages,) int, 每 stage box 约束数
+        ng_per_stage: (N_stages,) int, 每 stage 实际非空线性约束数
+        Cmat_stack  : (total_ng, nx) 所有线性约束的状态系数, 按 stage 顺序行堆叠
+                      每行是一条约束的 C 系数 (1×nx), HPIPM set('C') 期望 (ng, nx)
+        Dmat_stack  : (total_ng, nu) 所有线性约束的控制系数, 按 stage 顺序行堆叠
+                      每行是一条约束的 D 系数 (1×nu), HPIPM set('D') 期望 (ng, nu)
+        lg_stack    : (total_ng,) 下界 (按 stage 顺序)
+        ug_stack    : (total_ng,) 上界 (按 stage 顺序)
+        x0          : (nx,) 初始状态 (box bounds: lbx=ubx=x0)
+        idxbx       : (nbx[0],) int, box 约束索引 (0-indexed, 索引 x 内位置)
+        const       : float, 常数项 (不×2, 仅用于 obj 比较)
+        verbose     : bool, 是否打印诊断信息
+
+    返回 dict (与 solve_ocp_qcqp 兼容, 便于 control_RSS.m 复用):
+        x          : (36,) [u(:); nu(:)], u 为控制序列, nu 为速度序列
+        status     : int      0=成功
+        status_str : str
+        obj_value  : float    目标函数值
+        solve_time : float    求解耗时 (秒)
+        iters      : int      迭代次数
+    """
+    if not _HPIPM_OCP_QP_OK:
+        raise RuntimeError(
+            f"HPIPM OCP QP 不可用: {_HPIPM_OCP_QP_ERR}\n\n"
+            "需要 HPIPM 编译时启用 OCP QP 支持 (d_ocp_qp_* 符号)."
+        )
+
+    # === 统一转为 numpy float64 / int32 ===
+    A = np.asarray(A, dtype=np.float64)
+    B = np.asarray(B, dtype=np.float64)
+    Q_eff = np.asarray(Q_eff, dtype=np.float64)
+    R_eff = np.asarray(R_eff, dtype=np.float64)
+    b_stack = np.asarray(b_stack, dtype=np.float64)
+    r_stack = np.asarray(r_stack, dtype=np.float64)
+    nx_arr = np.asarray(nx_arr, dtype=np.int32).flatten()
+    nu_arr = np.asarray(nu_arr, dtype=np.int32).flatten()
+    ng_arr = np.asarray(ng_arr, dtype=np.int32).flatten()
+    nbx_arr = np.asarray(nbx_arr, dtype=np.int32).flatten()
+    ng_per_stage = np.asarray(ng_per_stage, dtype=np.int32).flatten()
+    Cmat_stack = np.asarray(Cmat_stack, dtype=np.float64)
+    Dmat_stack = np.asarray(Dmat_stack, dtype=np.float64)
+    lg_stack = np.asarray(lg_stack, dtype=np.float64).flatten()
+    ug_stack = np.asarray(ug_stack, dtype=np.float64).flatten()
+    x0 = np.asarray(x0, dtype=np.float64).flatten()
+    idxbx = np.asarray(idxbx, dtype=np.int32).flatten()
+
+    K = b_stack.shape[1]                  # horizon (=6)
+    N_stages = K + 1                      # n=0..K
+    nx0 = int(nx_arr[0])                  # 6
+    nu0 = int(nu_arr[0])                  # 3
+
+    # === HPIPM 维度设置 ===
+    dim = hpipm_ocp_qp_dim(K)             # N=K (horizon)
+    for s in range(N_stages):
+        dim.set('nx', int(nx_arr[s]), s)
+        dim.set('nu', int(nu_arr[s]), s)
+        dim.set('nbx', int(nbx_arr[s]), s)
+        dim.set('ng', int(ng_arr[s]), s)
+        # nbu=0, ns=0 (默认, 无控制 box/软约束)
+
+    # === HPIPM OCP QP 数据设置 (逐 stage) ===
+    qp = hpipm_ocp_qp(dim)
+
+    # 动力学 (n=0..K-1): A, B, b
+    for n in range(K):
+        qp.set('A', A, n)
+        qp.set('B', B, n)
+        qp.set('b', b_stack[:, n], n)
+
+    # 代价 (n=0..K): Q, q=0; (n=0..K-1): R, r, S=0; 终端 n=K: 仅 Q, q
+    q_zero = np.zeros(nx0)
+    S_zero = np.zeros((nu0, nx0))         # HPIPM S 是 (nu, nx)
+    for n in range(N_stages):
+        qp.set('Q', Q_eff, n)
+        qp.set('q', q_zero, n)
+        if n < K:
+            qp.set('R', R_eff, n)
+            qp.set('r', r_stack[:, n], n)
+            qp.set('S', S_zero, n)
+
+    # 一般线性约束 (逐 stage, 按 ng_per_stage 切片 Cmat_stack/Dmat_stack)
+    # HPIPM OCP QP: set('C', (ng, nx), stage), set('D', (ng, nu), stage)
+    #               set('lg', (ng,), stage), set('ug', (ng,), stage)
+    # 约束形式: lg <= C*x + D*u <= ug
+    offset = 0
+    for s in range(N_stages):
+        ng_s = int(ng_per_stage[s])
+        if ng_s > 0:
+            nx_s = int(nx_arr[s])
+            nu_s = int(nu_arr[s])
+            # C: (ng_s, nx_s) — 从 Cmat_stack 切片行
+            C_s = Cmat_stack[offset:offset + ng_s, :nx_s]
+            qp.set('C', C_s, s)
+            # D: (ng_s, nu_s) — 终端 stage nu_s=0 时跳过 (HPIPM 自动处理)
+            if nu_s > 0:
+                D_s = Dmat_stack[offset:offset + ng_s, :nu_s]
+                qp.set('D', D_s, s)
+            # lg/ug: (ng_s,) 向量
+            lg_s = lg_stack[offset:offset + ng_s]
+            ug_s = ug_stack[offset:offset + ng_s]
+            qp.set('lg', lg_s, s)
+            qp.set('ug', ug_s, s)
+        offset += ng_s
+
+    # 初始状态 box 约束 (stage 0: lbx=ubx=x0, idxbx=0..5)
+    if int(nbx_arr[0]) > 0:
+        qp.set('idxbx', idxbx, 0)
+        qp.set('lbx', x0, 0)
+        qp.set('ubx', x0, 0)
+
+    # === 诊断: 打印维度信息 (仅首步首迭代) ===
+    if verbose:
+        print(f"\n[hpipm_ocp_qp_diag] K={K}, N_stages={N_stages}", file=sys.stderr)
+        print(f"[hpipm_ocp_qp_diag] nx_arr={nx_arr.tolist()}", file=sys.stderr)
+        print(f"[hpipm_ocp_qp_diag] nu_arr={nu_arr.tolist()}", file=sys.stderr)
+        print(f"[hpipm_ocp_qp_diag] ng_arr={ng_arr.tolist()}", file=sys.stderr)
+        print(f"[hpipm_ocp_qp_diag] nbx_arr={nbx_arr.tolist()}", file=sys.stderr)
+        print(f"[hpipm_ocp_qp_diag] ng_per_stage={ng_per_stage.tolist()}", file=sys.stderr)
+        print(f"[hpipm_ocp_qp_diag] total_ng={int(ng_per_stage.sum())}", file=sys.stderr)
+        print(f"[hpipm_ocp_qp_diag] Cmat_stack.shape={Cmat_stack.shape}", file=sys.stderr)
+        print(f"[hpipm_ocp_qp_diag] Dmat_stack.shape={Dmat_stack.shape}", file=sys.stderr)
+        # 检查数据有限性
+        for name, arr in [('A', A), ('B', B), ('Q_eff', Q_eff), ('R_eff', R_eff),
+                          ('b_stack', b_stack), ('r_stack', r_stack),
+                          ('x0', x0), ('Cmat_stack', Cmat_stack),
+                          ('Dmat_stack', Dmat_stack), ('lg_stack', lg_stack),
+                          ('ug_stack', ug_stack)]:
+            if not np.all(np.isfinite(arr)):
+                print(f"[hpipm_ocp_qp_diag] !!! {name} contains NaN/Inf !!!", file=sys.stderr)
+        # 打印 HPIPM 内部结构到文件
+        try:
+            with open('hpipm_ocp_qp_struct_dump.txt', 'w') as f:
+                import io
+                from contextlib import redirect_stdout
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    qp.print_C_struct()
+                f.write(buf.getvalue())
+            print(f"[hpipm_ocp_qp_diag] HPIPM C struct 已写入 hpipm_ocp_qp_struct_dump.txt", file=sys.stderr)
+        except Exception as e:
+            print(f"[hpipm_ocp_qp_diag] print_C_struct 失败: {e}", file=sys.stderr)
+
+    # === 求解 ===
+    qp_sol = hpipm_ocp_qp_sol(dim)
+
+    # balance 模式 + tol=1e-6 + iter_max=300
+    arg = hpipm_ocp_qp_solver_arg(dim, 'balance')
+    arg.set('iter_max', 300)
+    arg.set('tol_stat', 1e-6)
+    arg.set('tol_eq', 1e-6)
+    arg.set('tol_ineq', 1e-6)
+    arg.set('tol_comp', 1e-6)
+
+    solver = hpipm_ocp_qp_solver(dim, arg)
+    t0 = time.time()
+    solver.solve(qp, qp_sol)
+    solve_time = time.time() - t0
+
+    status = int(solver.get('status'))
+    iters = int(solver.get('iter'))
+    if verbose:
+        print(f"[hpipm_ocp_qp_diag] status={status}, iters={iters}", file=sys.stderr)
+
+    # 提取解: u_n (n=0..K-1), x_n (n=0..K)
+    u_list = []
+    x_list = []
+    for n in range(N_stages):
+        x_n = np.asarray(qp_sol.get('x', n)).flatten()
+        x_list.append(x_n)
+        if n < K:
+            u_n = np.asarray(qp_sol.get('u', n)).flatten()
+            u_list.append(u_n)
+
+    # 拼成 36 维 [u(:); nu(:)] 兼容 control_RSS.m 的提取逻辑
+    # u_n (n=0..K-1) = 论文 u_{n+1} (k=1..K), 列顺序对齐
+    u_flat = np.concatenate(u_list) if u_list else np.zeros(0)   # 18 维
+    # nu (速度序列): x_k 后 3 维 (k=1..K), 即 v_k
+    nu_flat = np.concatenate([x_list[k][3:6] for k in range(1, N_stages)])  # 18 维
+    x_out = np.concatenate([u_flat, nu_flat])
+
+    # 手动计算 obj_value (Q_eff, R_eff, r 已×2; 0.5 前缀还原)
+    obj_value = const
+    for n in range(N_stages):
+        xn = x_list[n]
+        obj_value += 0.5 * float(xn @ Q_eff @ xn)     # 状态代价 (已×2 → 0.5*2=1)
+        if n < K:
+            un = u_list[n]
+            obj_value += 0.5 * float(un @ R_eff @ un)  # 控制代价
+            obj_value += float(r_stack[:, n] @ un)      # 控制线性项 (已×2)
+
+    # balance 失败回退 robust
+    if status != 0:
+        if verbose:
+            print(f"[hpipm_ocp_qp] balance 失败 (status={status}), 重试 robust...", file=sys.stderr)
+        arg2 = hpipm_ocp_qp_solver_arg(dim, 'robust')
+        arg2.set('iter_max', 500)
+        arg2.set('tol_stat', 1e-6)
+        arg2.set('tol_eq', 1e-6)
+        arg2.set('tol_ineq', 1e-6)
+        arg2.set('tol_comp', 1e-6)
+        solver2 = hpipm_ocp_qp_solver(dim, arg2)
+        t1 = time.time()
+        solver2.solve(qp, qp_sol)
+        solve_time += time.time() - t1
+        status = int(solver2.get('status'))
+        iters = int(solver2.get('iter'))
+        # 重新提取解
+        u_list = []
+        x_list = []
+        for n in range(N_stages):
+            x_n = np.asarray(qp_sol.get('x', n)).flatten()
+            x_list.append(x_n)
+            if n < K:
+                u_n = np.asarray(qp_sol.get('u', n)).flatten()
+                u_list.append(u_n)
+        u_flat = np.concatenate(u_list) if u_list else np.zeros(0)
+        nu_flat = np.concatenate([x_list[k][3:6] for k in range(1, N_stages)])
+        x_out = np.concatenate([u_flat, nu_flat])
+        obj_value = const
+        for n in range(N_stages):
+            xn = x_list[n]
+            obj_value += 0.5 * float(xn @ Q_eff @ xn)
+            if n < K:
+                un = u_list[n]
+                obj_value += 0.5 * float(un @ R_eff @ un)
+                obj_value += float(r_stack[:, n] @ un)
+
+    status_str = 'Solved' if status == 0 else f'Failed({status})'
+
+    return {
+        'x': x_out,                 # (36,) [u(:); nu(:)]
+        'status': status,           # 0=成功
+        'status_str': status_str,
+        'obj_value': float(obj_value),
         'solve_time': float(solve_time),
         'iters': iters,
     }

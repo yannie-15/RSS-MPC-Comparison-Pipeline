@@ -16,7 +16,7 @@ function report = verify_constraints_hpipm()
 %      仅当相邻轮速均大于低速阈值时检查；低速情况单独记为 undefined。
 %
 %   4. 控制器接口一致性
-%        bodyVelocity == current_nu + u(:,1)
+%        bodyVelocity == v0 + u(:,1)
 %        worldVelocity == T_world_body * bodyVelocity
 %
 % 说明：
@@ -163,7 +163,7 @@ fprintf('wheels      = %d\n\n',num_wheels);
 %% 闭环验证
 for step = 1:num_steps
     viol.attempted(step) = true;
-    current_nu = last_vel;
+    v0 = last_vel;  % ν_0 (已知量: 当前车体系速度)
 
     try
         [u_full,worldVelocity,bodyVelocity,diag] = ...
@@ -204,7 +204,7 @@ for step = 1:num_steps
 
         %% 重构 nu 序列
         nu_seq = zeros(3,K);
-        nu_seq(:,1) = current_nu + u_full(:,1);
+        nu_seq(:,1) = v0 + u_full(:,1);
 
         for k = 1:K-1
             nu_seq(:,k+1) = ...
@@ -232,7 +232,7 @@ for step = 1:num_steps
 
         if body_error > tol.interface
             error('HPIPMVerification:BodyVelocityMismatch', ...
-                ['bodyVelocity 与 current_nu+u(:,1) 不一致，', ...
+                ['bodyVelocity 与 v0+u(:,1) 不一致，', ...
                  '误差为 %.6e。'],body_error);
         end
 
@@ -244,7 +244,7 @@ for step = 1:num_steps
 
         %% 原始约束检查
         check = check_original_constraints( ...
-            current_nu,nu_seq,Hn,R_set, ...
+            v0,nu_seq,Hn,R_set, ...
             vimax,delta_theta,tol);
 
         viol.speed_max(step) = check.speed_max;
@@ -493,7 +493,7 @@ end
 
 %% 检查原始约束
 function check = check_original_constraints( ...
-    current_nu,nu_seq,Hn,R_set, ...
+    v0,nu_seq,Hn,R_set, ...
     vimax,delta_theta,tol)
 
 num_wheels = numel(Hn);
@@ -539,7 +539,7 @@ cone_worst_n = NaN;
 cone_worst_i = NaN;
 
 for n = 1:num_wheels
-    z_prev = Hn{n} * current_nu;
+    z_prev = Hn{n} * v0;
 
     for k = 1:K
         z_curr = Hn{n} * nu_seq(:,k);
@@ -582,7 +582,7 @@ angle_tol = tol.angle_abs + ...
     tol.angle_rel * max(1,delta_theta);
 
 for n = 1:num_wheels
-    z_prev = Hn{n} * current_nu;
+    z_prev = Hn{n} * v0;
 
     for k = 1:K
         z_curr = Hn{n} * nu_seq(:,k);

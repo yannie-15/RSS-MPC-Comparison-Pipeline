@@ -5,55 +5,54 @@
 
 ## 1. 动机
 
-用**选择矩阵**把所有 e_k 统一表达为 `e_k = B·I_k·v + c_k`，然后直接做矩阵乘法 `e_k'Q e_k = (B·I_k·v + c_k)'Q(B·I_k·v + c_k)`，一次性得到 H/g/const，避免逐项展开。
+用**选择矩阵**把所有 $\mathbf{e}_k$ 统一表达为 $\mathbf{e}_k = \mathbf{B}\,\mathbf{I}_k\,\boldsymbol{v} + \mathbf{c}_k$，然后直接做矩阵乘法 $\mathbf{e}_k^\top \mathbf{Q} \mathbf{e}_k = (\mathbf{B}\,\mathbf{I}_k\,\boldsymbol{v} + \mathbf{c}_k)^\top \mathbf{Q} (\mathbf{B}\,\mathbf{I}_k\,\boldsymbol{v} + \mathbf{c}_k)$，一次性得到 H/g/const，避免逐项展开。
 
-v 含完整预测时域 `v_0..v_K`（含 v_K），从而控制正则和 RSS 正则的求和范围 `k=1..K` 与 V1 完全一致，**V1 与 V2 严格等价**（见第 4 节）。
+$\boldsymbol{v}$ 含完整预测时域 $v_0..v_K$（含 $v_K$），从而控制正则和 RSS 正则的求和范围 $k=1..K$ 与 V1 完全一致，**V1 与 V2 严格等价**（见第 3 节）。
 
 ## 2. 新方法思路（V2）— 选择矩阵法
 
 ### 2.1 变量定义
 
-将预测时域内的速度变量（**含 v_0 和 v_K**）堆叠成长向量 `v`（3(K+1)×1）：
+将预测时域内的速度变量（**含 $v_0$ 和 $v_K$**）堆叠成长向量 $\boldsymbol{v}$（$3(K+1) \times 1$）：
 
-```
-v = [v_0; v_1; v_2; ...; v_K]    (3(K+1)×1)
-```
+$$
+\boldsymbol{v} = \begin{bmatrix} v_0 \\ v_1 \\ v_2 \\ \vdots \\ v_K \end{bmatrix} \quad (3(K+1) \times 1)
+$$
 
-- `v_0 = current_nu`（当前速度，**已知量**，靠等式约束 `v_0 = current_nu` 锁定）
-- `v_l = nu(:,l)` for l=0..K（共 K+1 块）
-- **含 v_K**：对应 V1 中的 `nu(:,K)`，使控制正则和 RSS 正则的求和范围 `k=1..K` 与 V1 一致（含 u_K）
-- v_K 在**跟踪代价**中不出现（e_k 最大用到 `v_0..v_{K-1}`），但出现在**控制/RSS 正则**中（u_K = v_K - v_{K-1}）
+- $v_0 = v_0^{\text{cur}}$（当前车体系速度 `state_dot`，**已知量**，靠等式约束 $v_0 = v_0^{\text{cur}}$ 锁定）
+- $v_l = \nu(:,l)$ for $l=0..K$（共 $K+1$ 块）
+- **含 $v_K$**：对应 V1 中的 $\nu(:,K)$，使控制正则和 RSS 正则的求和范围 $k=1..K$ 与 V1 一致（含 $u_K$）
+- $v_K$ 在**跟踪代价**中不出现（$\mathbf{e}_k$ 最大用到 $v_0..v_{K-1}$），但出现在**控制/RSS 正则**中（$u_K = v_K - v_{K-1}$）
 
 ```matlab
 % 对应代码 (§8):
 n_var = 3 * (K+1);    % 21 (V1 是 36, V2 消去了 u 但保留 v_0 和 v_K)
-% v_0 = current_nu 作为等式约束锁定, 不分离
+% v_0 = v0 作为等式约束锁定, 不分离
 ```
 
-### 2.2 误差递推（c_k 随 k 变化）
+### 2.2 误差递推（$\mathbf{c}_k$ 随 $k$ 变化）
 
-论文公式 (19) 的离散化形式（求和从 l=0 开始）：
+论文公式 (19) 的离散化形式（求和从 $l=0$ 开始）：
 
-```
-e_k = current_xy - ref_xy_k + R(ψ0)·dt·Σ_{l=0}^{k-1} v_l
-```
+$$
+\mathbf{e}_k = \boldsymbol{\xi}_{\text{cur}} - \boldsymbol{\xi}_k^{\text{ref}} + \mathbf{R}(\psi_0) \cdot \tau \cdot \sum_{l=0}^{k-1} v_l
+$$
 
-定义 **c_k**（随 k 变化的常数部分，**不含 v_0**，因为 v_0 已在 v 中）：
+定义 $\mathbf{c}_k$（随 $k$ 变化的常数部分，**不含 $v_0$**，因为 $v_0$ 已在 $\boldsymbol{v}$ 中）：
 
-```
-c_k = current_xy - ref_xy_k     (3×1, 随 k 变化)
-```
+$$
+\mathbf{c}_k = \boldsymbol{\xi}_{\text{cur}} - \boldsymbol{\xi}_k^{\text{ref}} \quad (3 \times 1,\ \text{随}\ k\ \text{变化})
+$$
 
-- `current_xy - ref_xy_k`：随 k 变化（因为 ref_xy_k 每步不同）
-- v_0 的贡献由选择矩阵 `I_k` 从 v 中提取（见 2.3）
-- **v_K 不出现在任何 e_k 中**：因求和上限为 `k-1 ≤ K-1`，v_K 块在 I_k 中恒为 0
+- $\boldsymbol{\xi}_{\text{cur}} - \boldsymbol{\xi}_k^{\text{ref}}$：随 $k$ 变化（因为 $\boldsymbol{\xi}_k^{\text{ref}}$ 每步不同）
+- $v_0$ 的贡献由选择矩阵 $\mathbf{I}_k$ 从 $\boldsymbol{v}$ 中提取（见 2.3）
+- **$v_K$ 不出现在任何 $\mathbf{e}_k$ 中**：因求和上限为 $k-1 \le K-1$，$v_K$ 块在 $\mathbf{I}_k$ 中恒为 $\mathbf{0}$
 
 因此误差可写成：
 
-```
-e_k = c_k + R(ψ0)·dt·Σ_{l=0}^{k-1} v_l
-      └─ 随k变化 ─┘   └── B·I_k·v (含 v_0, 不含 v_K) ──┘
-```
+$$
+\mathbf{e}_k = \underbrace{\mathbf{c}_k}_{\text{随}\ k\ \text{变化}} + \underbrace{\mathbf{B}\,\mathbf{I}_k\,\boldsymbol{v}}_{\text{含}\ v_0,\ \text{不含}\ v_K}
+$$
 
 ```matlab
 % 对应代码 (§8):
@@ -61,26 +60,28 @@ ref_idx = min(size(path, 2), step + k);
 ref_xy_k  = path(1:2, ref_idx);
 ref_psi_k = path(3,   ref_idx);
 
+% c_k: 3×1, 随 k 变化 (不含 v_0, 因为 v_0 在 v 中)
+%   c_k = [ current_xy - ref_xy_k ]   ← 位置误差常数 (2×1)
+%         [ psi0      - ref_psi_k ]   ← 姿态误差常数 (1×1)
 c_k = [current_xy - ref_xy_k;
-            psi0      - ref_psi_k];  % 3×1, 随 k 变化 (不含 v_0)
+            psi0      - ref_psi_k];
 ```
 
-### 2.3 选择矩阵 I_k
+### 2.3 选择矩阵 $\mathbf{I}_k$
 
-定义**选择矩阵 I_k**（3×3(K+1)）：
+定义**选择矩阵 $\mathbf{I}_k$**（$3 \times 3(K+1)$）：
 
-```
-I_k = [I, I, ..., I, 0, 0, ..., 0]
-       └── k 个 I_3×3 ──┘  └─ (K+1-k) 个 0 ─┘
-```
+$$
+\mathbf{I}_k = \begin{bmatrix} \mathbf{I} & \mathbf{I} & \cdots & \mathbf{I} & \mathbf{0} & \mathbf{0} & \cdots & \mathbf{0} \end{bmatrix}
+$$
 
-- `I` 是 **3×3 单位矩阵**
-- 前 k 个块是 I（含 v_0 块，对应 l=0..k-1），后 K+1-k 个块是 0（**含 v_K 块**）
-- 作用：从 v 中选出前 k 个速度块（含 v_0，**不含 v_K**）并求和
+- $\mathbf{I}$ 是 $3 \times 3$ 单位矩阵
+- 前 $k$ 个块是 $\mathbf{I}$（含 $v_0$ 块，对应 $l=0..k-1$），后 $K+1-k$ 个块是 $\mathbf{0}$（**含 $v_K$ 块**）
+- 作用：从 $\boldsymbol{v}$ 中选出前 $k$ 个速度块（含 $v_0$，**不含 $v_K$）并求和
 
-```
-I_k · v = v_0 + v_1 + ... + v_{k-1} = Σ_{l=0}^{k-1} v_l    (3×1)
-```
+$$
+\mathbf{I}_k \cdot \boldsymbol{v} = v_0 + v_1 + \cdots + v_{k-1} = \sum_{l=0}^{k-1} v_l \quad (3 \times 1)
+$$
 
 ```matlab
 % 对应代码 (§8):
@@ -90,551 +91,533 @@ for l = 0:k-1
 end
 ```
 
-### 2.4 代价展开
+### 2.4 HPIPM 求解器要求的 QP 形式
 
-代入代价 `e_k'Q e_k`：
+HPIPM 求解的 dense QP 标准形式（无 slack 的硬约束子集）：
 
-```
-e_k'Q e_k = (c_k + B·I_k·v)' · Q · (c_k + B·I_k·v)
-```
+$$
+\begin{aligned}
+\min_{\boldsymbol{v}} \quad & \tfrac{1}{2} \boldsymbol{v}^\top \mathbf{H} \boldsymbol{v} + \mathbf{g}^\top \boldsymbol{v} + \text{const} \\
+\text{s.t.} \quad & \mathbf{A}\boldsymbol{v} = \mathbf{b} \\
+& \tfrac{1}{2} \boldsymbol{v}^\top \mathbf{H}_{q,i} \boldsymbol{v} + \mathbf{g}_{q,i}^\top \boldsymbol{v} \le u_{q,i}
+\end{aligned}
+$$
 
-其中 `B` 是单步转移矩阵（3×3，定义见 2.8），`I_k` 是选择矩阵（3×3(K+1)，定义见 2.3）：
+- $\mathbf{H}$：Hessian 矩阵（$n_{\text{var}} \times n_{\text{var}}$，对称半正定）
+- $\mathbf{g}$：一次项系数向量（$n_{\text{var}} \times 1$）
+- $\text{const}$：常数项（标量，不影响最优解，仅用于目标值 obj 比较）
+- $\boldsymbol{v}$：决策变量 $= [v_0; v_1; \ldots; v_K]$（$3(K+1) \times 1 = 21$ 维）
 
-```
-e_k'Q e_k = (c_k + B·I_k·v)' · Q · (c_k + B·I_k·v)
-          = c_k'Q c_k                        ← (A) 常数项 (随k变化)
-          + 2·c_k'Q·B·I_k·v                   ← (B) 一次项 (随k变化)
-          + v'·(B·I_k)'·Q·(B·I_k)·v          ← (C) 二次项 (与k无关的结构)
-```
+**关键约定**：HPIPM 目标中的二次项系数是 $\tfrac{1}{2}$，而我们代价展开得到的是 $\boldsymbol{v}^\top \mathbf{A} \boldsymbol{v}$（系数为 1）。为了让两者匹配，**所有二次项贡献在累加到 $\mathbf{H}$ 时都乘以 2**，使得：
 
-> 注意：因 I_k 的 v_K 列恒为 0，v_K 不出现在跟踪代价的任何项中。
+$$
+\boldsymbol{v}^\top \mathbf{A} \boldsymbol{v} = \tfrac{1}{2} \boldsymbol{v}^\top (2\mathbf{A}) \boldsymbol{v} \quad \Leftarrow \quad \mathbf{H} \text{ 中存的是 } 2\mathbf{A}
+$$
+
+### 2.5 RSS 论文的代价函数
+
+论文公式 (17)-(18)，代价函数分为三项（求和范围 $k=1..K$，**含 $u_K$**，与 V1 一致）：
+
+$$
+J = \underbrace{\sum_{k=1}^{K} \mathbf{e}_k^\top \mathbf{Q} \mathbf{e}_k}_{\text{① 跟踪代价}} + \underbrace{\sum_{k=1}^{K} \mathbf{u}_k^\top \mathbf{R} \mathbf{u}_k}_{\text{② 控制正则化}} + \underbrace{\rho \sum_{k=1}^{K} \|\mathbf{u}_k - \hat{\mathbf{u}}_k\|^2}_{\text{③ RSS 强凸正则化}}
+$$
+
+参数：
+- $\mathbf{Q} = \text{diag}(30, 30, 1)$：跟踪权重（位置 30，姿态 1）
+- $\mathbf{R} = 0.3 \cdot \mathbf{I}_3$：控制权重
+- $\rho = 0.01$：RSS 强凸参数
+- $\hat{\mathbf{u}}_k$：上次迭代求得的 $\mathbf{u}_k$（已知常数）
+
+对应到 HPIPM 形式，三项分别贡献到 H/g/const：
+
+$$
+\mathbf{H} = \mathbf{H}_{\text{track}} + \mathbf{H}_u + \mathbf{H}_\rho, \quad \mathbf{g} = \mathbf{g}_{\text{track}} + \mathbf{g}_u + \mathbf{g}_\rho, \quad \text{const} = \text{const}_{\text{track}} + \text{const}_u + \text{const}_\rho
+$$
+
+下面分别展开三项。
+
+### 2.6 ① 跟踪代价 $\mathbf{e}_k^\top \mathbf{Q} \mathbf{e}_k$
+
+#### 误差的仿射表达
+
+由 §2.2、§2.3，误差 $\mathbf{e}_k$ 可写为决策变量 $\boldsymbol{v}$ 的仿射函数：
+
+$$
+\mathbf{e}_k = \underbrace{\mathbf{c}_k}_{\text{常数}} + \underbrace{\mathbf{B}\,\mathbf{I}_k\,\boldsymbol{v}}_{\text{线性项}}
+$$
+
+- $\mathbf{c}_k$：$3 \times 1$ 常数向量（随 $k$ 变化，见 §2.6.1）
+- $\mathbf{B}$：$3 \times 3$ 单步转移矩阵（见 §2.6.2）
+- $\mathbf{I}_k$：$3 \times 3(K+1)$ 选择矩阵（前 $k$ 块为 $\mathbf{I}$，含 $v_0$，**不含 $v_K$**）
+
+#### 2.6.1 $\mathbf{c}_k$ 是什么
+
+**$\mathbf{c}_k$ 是跟踪误差的"常数偏移部分"**（$3 \times 1$ 向量，随 $k$ 变化），对应论文公式 (19) 中**不含决策变量**的那一项。
+
+**物理含义**：$\mathbf{c}_k$ 表示**当前状态与第 $k$ 步参考轨迹之间的初始误差**，由两部分组成：
+
+$$
+\mathbf{c}_k = \begin{bmatrix} \boldsymbol{\xi}_{\text{cur}}^{xy} - \boldsymbol{\xi}_k^{\text{ref},xy} \\ \psi_0 - \psi_k^{\text{ref}} \end{bmatrix} \quad \begin{matrix} \leftarrow \text{位置误差常数}\ (2 \times 1,\ \text{世界系}) \\ \leftarrow \text{姿态误差常数}\ (1 \times 1,\ \text{标量}) \end{matrix}
+$$
+
+- $\boldsymbol{\xi}_{\text{cur}}^{xy}$（$2 \times 1$）：当前世界系位置 $[\text{state}(1); \text{state}(2)]$，**已知量**（不随 $k$ 变化）
+- $\boldsymbol{\xi}_k^{\text{ref},xy}$（$2 \times 1$）：第 $k$ 步参考位置 `path(1:2, ref_idx)`，**随 $k$ 变化**（贝塞尔曲线采样点）
+- $\psi_0$（标量）：当前航向 `state(3)`，**已知量**（不随 $k$ 变化）
+- $\psi_k^{\text{ref}}$（标量）：第 $k$ 步参考航向 `path(3, ref_idx)`，**随 $k$ 变化**
+
+**为什么 $\mathbf{c}_k$ 随 $k$ 变化**：因为 $\boldsymbol{\xi}_k^{\text{ref},xy}$ 和 $\psi_k^{\text{ref}}$ 是参考轨迹上第 $k$ 个采样点，每一步都不同（机器人沿轨迹前进，参考点也在移动）。
+
+**为什么 $\mathbf{c}_k$ 不含 $v_0$**：在 V2 中 $v_0$ 放进了决策变量 $\boldsymbol{v}$ 中，$v_0$ 的贡献由选择矩阵 $\mathbf{I}_k$ 从 $\boldsymbol{v}$ 中提取（见 §2.3）。$\mathbf{c}_k$ 只包含**纯已知常数**（当前状态 - 参考轨迹），不含任何决策变量。
+
+**$\mathbf{c}_k$ 在跟踪代价中的角色**：跟踪误差 $\mathbf{e}_k = \mathbf{c}_k + \mathbf{B}\,\mathbf{I}_k\,\boldsymbol{v}$，其中：
+- $\mathbf{c}_k$：常数偏移（产生常数项和一次项）
+- $\mathbf{B}\,\mathbf{I}_k\,\boldsymbol{v}$：决策变量的线性组合（产生一次项和二次项）
+
+**参考轨迹索引 `ref_idx`**：
 
 ```matlab
-% 对应代码 (§8) — 代码层面用中间变量 M_k = B*I_k 简化书写:
-M_k = B_mat * I_k;                              % 3×3(K+1) (B·I_k), v_K 列为 0
+ref_idx = min(size(path, 2), step + k);
 ```
 
-### 2.5 三部分分离
-
-#### (A) 常数项（随 k 变化）
-
-```
-c_k'Q c_k    ← 不含决策变量 v, 但随 k 变化
-```
-
-- 来源：第 k 步初始误差的平方（含 ref_xy_k 的贡献）
-- 去向：累加到 `objective_constant`
-
-#### (B) 一次项（随 k 变化）
-
-```
-2·c_k'Q·B·I_k·v = 2·((B·I_k)'·Q·c_k)'·v
-```
-
-- 系数：`g_k = 2·(B·I_k)'·Q·c_k`（3(K+1)×1 向量，随 k 变化；**v_K 行恒为 0**）
-- 去向：累加到 `g_vec`
-
-#### (C) 二次项（结构不随 k 变化）
-
-```
-v'·(B·I_k)'·Q·(B·I_k)·v
-```
-
-- Hessian 贡献：`H_k = 2·(B·I_k)'·Q·(B·I_k)`（3(K+1)×3(K+1) 矩阵，前乘 2 抵消 HPIPM 的 0.5；**v_K 行/列恒为 0**）
-- 去向：累加到 `H_mat`
-
-```matlab
-% 对应代码 (§8) — 三部分一次性计算 (用中间变量 M_k = B*I_k 简化书写):
-const_track = const_track + c_k' * Q_mat * c_k;          % (A) 常数
-g_track     = g_track     + 2 * M_k' * Q_mat * c_k;        % (B) 一次
-H_track     = H_track     + 2 * M_k' * Q_mat * M_k;        % (C) 二次
-```
-
-### 2.6 对所有 k 求和
-
-完整的跟踪代价：
-
-```
-Σ_{k=1}^K e_k'Q e_k = Σ_k [c_k'Q c_k]  +  Σ_k [2·c_k'Q·B·I_k·v]  +  Σ_k [v'·(B·I_k)'·Q·(B·I_k)·v]
-                      └── 常数(k相关) ──┘   └─── 一次项(k相关) ───┘   └──────── 二次项 ────────┘
-```
-
-**H 矩阵（二次项）**：
-
-```
-H = 2 · Σ_{k=1}^K (B·I_k)'·Q·(B·I_k)
-  = 2 · Σ_{k=1}^K I_k'·B'·Q·B·I_k
-```
-
-令 `Q_B = B'·Q·B`（3×3 的"等效权重"），则：
-
-```
-H = 2 · Σ_{k=1}^K I_k'·Q_B·I_k
-```
-
-> 注意：Q_B 是 3×3（不是 3(K+1)×3(K+1)），因为 B 是 3×3。
-
-**g 向量（一次项，k 相关）**：
-
-```
-g = 2 · Σ_{k=1}^K (B·I_k)'·Q·c_k
-  = 2 · Σ_{k=1}^K I_k'·B'·Q·c_k
-```
-
-**常数项（k 相关）**：
-
-```
-objective_constant += Σ_{k=1}^K c_k'Q c_k
-```
-
-### 2.7 H 矩阵的结构（v 含 v_0 和 v_K）
-
-`I_k'·Q_B·I_k` 是 3(K+1)×3(K+1) 矩阵，非零块只在前 k 个块（块 0 到块 k-1）：
-
-```
-                v_0   v_1   ...  v_{k-1}  v_k  ...  v_K
-I_k'·Q_B·I_k = [ Q_B   Q_B  ...   Q_B      0   ...   0  ]
-               [ Q_B   Q_B  ...   Q_B      0   ...   0  ]
-               [  :     :          :       :         :  ]
-               [ Q_B   Q_B  ...   Q_B      0   ...   0  ]
-               [  0     0   ...    0       0   ...   0  ]
-               └─── k×k 个 Q_B 块 ───┘  └ K+1-k 块 0 ┘
-```
-
-对所有 k=1..K 求和（v 有 K+1 个块，索引 i,j ∈ 0..K）：
-
-跟踪代价部分块 (i, j) 的值为：`Σ_{k=1}^K [k > max(i,j)] · Q_B = (K - max(i,j)) · Q_B`（当 `max(i,j) ≤ K-1`）
-
-即跟踪代价贡献的 H 块结构为：
-
-```
-            v_0        v_1        ...    v_{K-1}    v_K
-H_track/2 = [ K·Q_B   (K-1)·Q_B  ...    1·Q_B      0  ]
-            [ (K-1)·Q_B (K-1)·Q_B ...   1·Q_B      0  ]
-            [   ...       ...     ...     ...       ...]
-            [ 1·Q_B     1·Q_B    ...    1·Q_B      0  ]
-            [  0          0       ...     0        0  ]
-```
-
-- **v_0 行/列系数为 K·Q_B**（被所有 K 个 e_k 使用）
-- **v_{K-1} 行/列系数为 1·Q_B**（仅被 e_K 使用）
-- **v_K 行/列系数为 0**（不被任何 e_k 使用，跟踪代价不依赖 v_K）
-
-> v_K 在 H_track 中全为 0，但其行/列会在控制正则（2.9）和 RSS 正则（2.10）中获得非零贡献。
-
-### 2.8 B 矩阵的定义
-
-B 是 3×3 单步转移矩阵，编码"车体系速度→世界系位移"的物理含义：
-
-- **位置部分**：`B_pos = R(ψ0)·dt`（车体系速度→世界系位移）
-- **姿态部分**：`B_psi = dt`（标量，无需旋转）
-
-B 的形式（3×3 分块对角）：
-
-```
-B = [ R(ψ0)·dt    0     ]
-    [    0       dt·1   ]
-```
-
-其中 `R(ψ0)·dt` 是 2×2 块，`dt·1` 是 1×1 块（标量 dt）。
-
-代入 `Q_B = B'·Q·B`：
-
-```
-Q_B = B'·Q·B
-    = [R·dt, 0; 0, dt]' · diag(30,30,1) · [R·dt, 0; 0, dt]
-    = [ (R·dt)'·diag(30,30)·(R·dt)        0            ]
-    [        0                          1·dt²           ]
-    = [ 30·dt²·I    0   ]    (利用 R'R=I)
-    [    0       dt²   ]
-```
-
-> 验证：Q_B 的位置块 = 30·dt²·I（2×2），姿态块 = dt²（1×1）。✓
+- `step`：当前全局步数（机器人在轨迹上的位置）
+- `k`：预测时域内的步数（$1..K$）
+- `step + k`：第 $k$ 步预测对应的参考轨迹索引
+- `min(..., size(path, 2))`：防止索引越界（轨迹末端用最后一个点填充）
 
 ```matlab
 % 对应代码 (§8):
-B_mat = [R_psi0 * dt,   zeros(2,1);           % 3×3 分块对角
+ref_idx = min(size(path, 2), step + k);
+ref_xy_k  = path(1:2, ref_idx);   % 第 k 步参考位置 (2×1)
+ref_psi_k = path(3,   ref_idx);   % 第 k 步参考航向 (标量)
+
+% c_k: 3×1, 随 k 变化 (不含 v_0, 因为 v_0 在 v 中)
+c_k = [current_xy - ref_xy_k;
+            psi0  - ref_psi_k];
+```
+
+#### 代入代价展开
+
+利用 $\mathbf{e}_k = \mathbf{c}_k + \mathbf{B}\,\mathbf{I}_k\,\boldsymbol{v}$：
+
+$$
+\mathbf{e}_k^\top \mathbf{Q} \mathbf{e}_k = (\mathbf{c}_k + \mathbf{B}\,\mathbf{I}_k\,\boldsymbol{v})^\top \mathbf{Q} (\mathbf{c}_k + \mathbf{B}\,\mathbf{I}_k\,\boldsymbol{v})
+$$
+
+$$
+= \underbrace{\mathbf{c}_k^\top \mathbf{Q} \mathbf{c}_k}_{(A)\ \text{常数项}} + \underbrace{2 \mathbf{c}_k^\top \mathbf{Q} (\mathbf{B}\,\mathbf{I}_k) \boldsymbol{v}}_{(B)\ \text{一次项}} + \underbrace{\boldsymbol{v}^\top (\mathbf{B}\,\mathbf{I}_k)^\top \mathbf{Q} (\mathbf{B}\,\mathbf{I}_k) \boldsymbol{v}}_{(C)\ \text{二次项}}
+$$
+
+#### (A) 常数项
+
+$$
+\text{const}_{\text{track}}(k) = \mathbf{c}_k^\top \mathbf{Q} \mathbf{c}_k \quad \text{(标量，随}\ k\ \text{变化)}
+$$
+
+累加到 `objective_constant`：
+
+$$
+\text{const}_{\text{track}} = \sum_{k=1}^{K} \mathbf{c}_k^\top \mathbf{Q} \mathbf{c}_k
+$$
+
+#### (B) 一次项
+
+$$
+2 \mathbf{c}_k^\top \mathbf{Q} (\mathbf{B}\,\mathbf{I}_k) \boldsymbol{v} = \big[ \underbrace{2 (\mathbf{B}\,\mathbf{I}_k)^\top \mathbf{Q} \mathbf{c}_k}_{\mathbf{g}_{\text{track}}(k)} \big]^\top \boldsymbol{v}
+$$
+
+$\mathbf{g}_{\text{track}}(k) = 2(\mathbf{B}\,\mathbf{I}_k)^\top \mathbf{Q} \mathbf{c}_k$（$3(K+1) \times 1$ 向量，随 $k$ 变化），累加：
+
+$$
+\mathbf{g}_{\text{track}} = \sum_{k=1}^{K} 2 (\mathbf{B}\,\mathbf{I}_k)^\top \mathbf{Q} \mathbf{c}_k = \sum_{k=1}^{K} 2 \mathbf{I}_k^\top \mathbf{B}^\top \mathbf{Q} \mathbf{c}_k
+$$
+
+#### (C) 二次项
+
+$$
+\boldsymbol{v}^\top (\mathbf{B}\,\mathbf{I}_k)^\top \mathbf{Q} (\mathbf{B}\,\mathbf{I}_k) \boldsymbol{v} = \tfrac{1}{2} \boldsymbol{v}^\top \underbrace{[2 (\mathbf{B}\,\mathbf{I}_k)^\top \mathbf{Q} (\mathbf{B}\,\mathbf{I}_k)]}_{\mathbf{H}_{\text{track}}(k)} \boldsymbol{v}
+$$
+
+$\mathbf{H}_{\text{track}}(k) = 2 (\mathbf{B}\,\mathbf{I}_k)^\top \mathbf{Q} (\mathbf{B}\,\mathbf{I}_k)$（$3(K+1) \times 3(K+1)$，前乘 2 抵消 HPIPM 的 0.5），累加：
+
+$$
+\mathbf{H}_{\text{track}} = 2 \sum_{k=1}^{K} (\mathbf{B}\,\mathbf{I}_k)^\top \mathbf{Q} (\mathbf{B}\,\mathbf{I}_k) = 2 \sum_{k=1}^{K} \mathbf{I}_k^\top \underbrace{(\mathbf{B}^\top \mathbf{Q} \mathbf{B})}_{\mathbf{Q}_B} \mathbf{I}_k = 2 \sum_{k=1}^{K} \mathbf{I}_k^\top \mathbf{Q}_B \mathbf{I}_k
+$$
+
+其中 $\mathbf{Q}_B = \mathbf{B}^\top \mathbf{Q} \mathbf{B}$（$3 \times 3$ 等效权重，见 §2.6.2）。
+
+#### 2.6.2 $\mathbf{B}$ 矩阵的定义
+
+$\mathbf{B}$ 是 $3 \times 3$ 单步转移矩阵，编码"车体系速度→世界系位移"的物理含义：
+
+- **位置部分**：$\mathbf{B}_{\text{pos}} = \mathbf{R}(\psi_0) \cdot \tau$（车体系速度→世界系位移，$2 \times 2$）
+- **姿态部分**：$B_\psi = \tau$（标量，无需旋转）
+
+$\mathbf{B}$ 的形式（$3 \times 3$ 分块对角）：
+
+$$
+\mathbf{B} = \begin{bmatrix} \mathbf{R}(\psi_0) \cdot \tau & \mathbf{0} \\ \mathbf{0} & \tau \end{bmatrix}
+$$
+
+代入 $\mathbf{Q}_B = \mathbf{B}^\top \mathbf{Q} \mathbf{B}$：
+
+$$
+\mathbf{Q}_B = \mathbf{B}^\top \mathbf{Q} \mathbf{B} = \begin{bmatrix} (\mathbf{R}\tau)^\top & \mathbf{0} \\ \mathbf{0} & \tau \end{bmatrix} \begin{bmatrix} 30\mathbf{I} & \mathbf{0} \\ \mathbf{0} & 1 \end{bmatrix} \begin{bmatrix} \mathbf{R}\tau & \mathbf{0} \\ \mathbf{0} & \tau \end{bmatrix} = \begin{bmatrix} 30 \tau^2 \cdot \mathbf{I} & \mathbf{0} \\ \mathbf{0} & \tau^2 \end{bmatrix}
+$$
+
+（利用 $\mathbf{R}^\top \mathbf{R} = \mathbf{I}$）
+
+- $\mathbf{Q}_B$ 的位置块 $= 30 \tau^2 \cdot \mathbf{I}$（$2 \times 2$）
+- $\mathbf{Q}_B$ 的姿态块 $= \tau^2$（$1 \times 1$）
+
+```matlab
+% 对应代码 (§8):
+B = [R_psi0 * dt,   zeros(2,1);           % 3×3 分块对角
          zeros(1,2),       dt    ];
-Q_mat = diag([w_pos, w_pos, w_psi]);          % diag(30, 30, 1)
-Q_B   = B_mat' * Q_mat * B_mat;               % [30*dt^2*I, 0; 0, dt^2]
+Q = diag([w_pos, w_pos, w_psi]);          % diag(30, 30, 1)
+Q_B   = B' * Q * B;               % [30*dt^2*I, 0; 0, dt^2]
 ```
 
-### 2.9 控制正则化 u_k'R u_k 的矩阵表达
+#### $\mathbf{H}_{\text{track}}$ 的块结构
 
-论文公式 (18) 第二项 `Σ_{k=1}^K u_k'R u_k`，其中 `R = w_control·I_3 = 0.3·I_3`。**求和范围 k=1..K（含 u_K）**，与 V1 一致。
+$\mathbf{I}_k^\top \mathbf{Q}_B \mathbf{I}_k$ 是 $3(K+1) \times 3(K+1)$ 矩阵，**非零块只在前 $k$ 个 $v$ 块**（块 0 到块 $k-1$）：
 
-#### u_k 与 v 的关系（差分表达）
+$$
+\mathbf{I}_k^\top \mathbf{Q}_B \mathbf{I}_k = \begin{bmatrix} \mathbf{Q}_B & \cdots & \mathbf{Q}_B & \mathbf{0} & \cdots & \mathbf{0} \\ \vdots & \ddots & \vdots & \vdots & & \vdots \\ \mathbf{Q}_B & \cdots & \mathbf{Q}_B & \mathbf{0} & \cdots & \mathbf{0} \\ \mathbf{0} & \cdots & \mathbf{0} & \mathbf{0} & \cdots & \mathbf{0} \end{bmatrix} \begin{matrix} \left.\begin{matrix} v_0 \\ \vdots \\ v_{k-1} \end{matrix}\right\} k \times k\ \text{个}\ \mathbf{Q}_B\ \text{块} \\ \left.\begin{matrix} v_k \\ \vdots \\ v_K \end{matrix}\right\} K+1-k\ \text{块}\ \mathbf{0} \end{matrix}
+$$
 
-由论文公式 (9) 离散化动力学 `ν_{k+1} = ν_k + u_{k+1}` 反推：
+对 $k=1..K$ 求和后，跟踪代价 $\mathbf{H}$ 块结构为（$\boldsymbol{v}$ 有 $K+1$ 块，索引 $i,j \in 0..K$）：
+
+$$
+\frac{\mathbf{H}_{\text{track}}}{2} = \begin{bmatrix} K\mathbf{Q}_B & (K-1)\mathbf{Q}_B & \cdots & 1\cdot\mathbf{Q}_B & \mathbf{0} \\ (K-1)\mathbf{Q}_B & (K-1)\mathbf{Q}_B & \cdots & 1\cdot\mathbf{Q}_B & \mathbf{0} \\ \vdots & \vdots & \ddots & \vdots & \vdots \\ 1\cdot\mathbf{Q}_B & 1\cdot\mathbf{Q}_B & \cdots & 1\cdot\mathbf{Q}_B & \mathbf{0} \\ \mathbf{0} & \mathbf{0} & \cdots & \mathbf{0} & \mathbf{0} \end{bmatrix} \begin{matrix} v_0 \\ v_1 \\ \vdots \\ v_{K-1} \\ v_K \end{matrix}
+$$
+
+- **$v_0$ 行/列**：$K \cdot \mathbf{Q}_B$（被所有 $K$ 个 $\mathbf{e}_k$ 使用）
+- **$v_{K-1}$ 行/列**：$1 \cdot \mathbf{Q}_B$（仅被 $\mathbf{e}_K$ 使用）
+- **$v_K$ 行/列**：$\mathbf{0}$（不被任何 $\mathbf{e}_k$ 使用，跟踪代价不依赖 $v_K$）
+
+> $v_K$ 在 $\mathbf{H}_{\text{track}}$ 中全为 $\mathbf{0}$，但其行/列会在 §2.7 控制正则和 §2.8 RSS 正则中获得非零贡献。
+
+#### 代码对应
+
+```matlab
+% 对应代码 (§8) — 三部分一次性计算:
+const_track = const_track + c_k' * Q * c_k;                       % (A) 常数
+g_track     = g_track     + 2 * (B*I_k)' * Q * c_k;                % (B) 一次
+H_track     = H_track     + 2 * (B*I_k)' * Q * (B*I_k);            % (C) 二次
 ```
-u_k = v_k - v_{k-1}     (差分关系)
-```
-其中 `v_0 = current_nu`（已知）。
 
-定义**差分矩阵 D_k**（3×3(K+1)），使得 `u_k = D_k·v + d_k`：
+### 2.7 ② 控制正则化 $\mathbf{u}_k^\top \mathbf{R} \mathbf{u}_k$
 
-```
-k=1:      D_1 = [ -I,  I,  0,  0, ..., 0 ]     d_1 = 0
-                └ v_0块┘ └v_1块┘
+#### $\mathbf{u}_k$ 的差分表达
 
-k=2..K-1: D_k = [ 0, ..., 0,  -I,  I, 0, ..., 0 ]
-                         └第k-1块┘ └第k块┘
-                (第 k-1 块为 -I, 第 k 块为 I, 其余为 0)
-              d_k = 0     (纯决策变量差分, 无常数项)
+由论文公式 (9) $\nu_{k+1} = \nu_k + u_{k+1}$ 反推：
 
-k=K:       D_K = [ 0, ..., 0,  -I,  I ]
-                              └第K-1块┘ └v_K块┘
-                (第 K-1 块为 -I, 第 K 块为 I, 即 u_K = v_K - v_{K-1})
-              d_K = 0
-```
+$$
+\mathbf{u}_k = v_k - v_{k-1} \quad \text{(差分关系)}
+$$
 
-- `D_k` 是稀疏矩阵，只有两个非零块
-- 作用：从 v 中选出第 k 块减去第 k-1 块（k=1 时 = v_1 - v_0，v_0 现在在 v 中）
-- **d_k = 0 for all k**（v_0 在 v 中，不再有常数项）
-- **k 范围为 1..K**（**含 u_K = v_K - v_{K-1}**，与 V1 一致）
+定义**差分矩阵 $\mathbf{D}_k$**（$3 \times 3(K+1)$），使得 $\mathbf{u}_k = \mathbf{D}_k \boldsymbol{v}$：
+
+$$
+\mathbf{D}_k = \begin{bmatrix} \mathbf{0} & \mathbf{0} & \mathbf{0} & \cdots & -\mathbf{I} & \mathbf{I} & \cdots & \mathbf{0} \end{bmatrix}
+$$
+
+- 第 $k-1$ 块为 $-\mathbf{I}$，第 $k$ 块为 $+\mathbf{I}$，其余为 $\mathbf{0}$
+- 因 $v_0$ 在 $\boldsymbol{v}$ 中，$\mathbf{u}_k = \mathbf{D}_k \boldsymbol{v}$ **完全由决策变量线性表达，无常数偏移**
 
 ```matlab
 % 对应代码 (§8):
 D_k = zeros(3, n_var);
-if k == 1
-    D_k(:, 0*3+1 : 1*3) = -eye(3);   % v_0 块 = -I
-    D_k(:, 1*3+1 : 2*3) =  eye(3);   % v_1 块 =  I
-else
-    D_k(:, (k-1)*3+1 : k*3)       =  eye(3);   % 第 k 块 = I
-    D_k(:, (k-2)*3+1 : (k-1)*3)   = -eye(3);   % 第 k-1 块 = -I
-end
-d_k = zeros(3,1);   % 无常数项 (v_0 在 v 中)
+D_k(:, k*3+1 : (k+1)*3) =  eye(3);   % v_k     块 = +I
+D_k(:, (k-1)*3+1 : k*3) = -eye(3);   % v_{k-1} 块 = -I
 ```
 
 #### 代价展开
 
-代入 `u_k'R u_k`（注意 d_k=0 for all k，因为 v_0 在 v 中）：
-```
-u_k'R u_k = (D_k·v)'·R·(D_k·v)
-          = v'·D_k'R·D_k·v       ← 只有二次项 (无常数项和一次项)
-```
+因 $\mathbf{u}_k$ 完全由 $\boldsymbol{v}$ 线性表达（无常数偏移），代入 $\mathbf{u}_k^\top \mathbf{R} \mathbf{u}_k$：
 
-#### (C) 二次项的 Hessian 结构
-
-`D_k'R·D_k` 只在块 (k,k), (k,k-1), (k-1,k), (k-1,k-1) 上有贡献：
-```
-块 (k, k)     :  I'R·I   =  R
-块 (k, k-1)   :  I'R·(-I) = -R
-块 (k-1, k)   : (-I)'R·I  = -R
-块 (k-1, k-1) : (-I)'R·(-I) = R
-```
-
-对所有 k=1..K 求和（v 有 K+1 块），Hessian 贡献（前乘 2 抵消 HPIPM 的 0.5）：
-```
-H_u/2 = Σ_{k=1}^{K} D_k'R·D_k
-```
-
-得到 **(K+1)×(K+1) 三对角块矩阵**（首尾对角块为 R，内部对角块为 2R，相邻非对角块为 -R）：
-```
-            v_0    v_1    v_2   ...   v_{K-1}  v_K
-H_u/2 =    [  R    -R     0    ...     0       0  ]
-           [ -R    2R    -R    ...     0       0  ]
-           [  0    -R     2R   ...     0       0  ]
-           [  ...                              ]
-           [  0     0     0    ...     2R     -R  ]
-           [  0     0     0    ...    -R       R  ]
-```
-
-- 对角块：首尾（块 v_0、块 v_K）为 `R`（只被一个 D_k 覆盖：v_0 仅被 D_1，v_K 仅被 D_K），中间为 `2R`（被两个相邻 D_k 覆盖）
-- 相邻非对角块：`-R`（来自差分的交叉项）
-- 非相邻块：`0`
-
-#### (B) 一次项
-
-**无**（因为 d_k=0 for all k）：
-```
-g_u = 0
-```
-
-#### (A) 常数项
-
-**无**（因为 d_k=0 for all k）：
-```
-const_u = 0
-```
-
-```matlab
-% 对应代码 (§8) — 只有二次项:
-H_u = H_u + 2 * D_k' * R_mat * D_k;    % (C) 二次
-% g_u = 0, const_u = 0 (d_k 全为 0)
-```
-
-### 2.10 RSS 强凸正则化 ρ·‖u-û‖² 的矩阵表达
-
-论文公式 (17)：`ρ·Σ_{k=1}^K ‖u_k - û_k‖²`，其中 `û_k` 是上次迭代解（已知），`ρ = 0.01`。**求和范围 k=1..K（含 u_K）**，与 V1 一致。
-
-#### 展开形式
-
-令 `δ_k = d_k - û_k = -û_k`（已知常数向量，因为 d_k=0 for all k）：
-- 对所有 k=1..K：`δ_k = -û_k`
-
-则 `u_k - û_k = D_k·v + δ_k`，代入代价：
-```
-ρ·‖u_k - û_k‖² = ρ·(D_k·v + δ_k)'·(D_k·v + δ_k)
-               = ρ·[ δ_k'δ_k  +  2·δ_k'·D_k·v  +  v'·D_k'·D_k·v ]
-                 └── 常数 ──┘   └── 一次项 ──┘   └── 二次项 ──┘
-```
-
-```matlab
-% 对应代码 (§8):
-delta_k = -u_hat(:, k);                          % δ_k = -û_k (d_k=0)
-H_rho     = H_rho     + 2 * rho * D_k' * D_k;          % (C) 二次
-g_rho     = g_rho     + 2 * rho * D_k' * delta_k;       % (B) 一次
-const_rho = const_rho +       rho * delta_k' * delta_k; % (A) 常数
-```
+$$
+\mathbf{u}_k^\top \mathbf{R} \mathbf{u}_k = (\mathbf{D}_k \boldsymbol{v})^\top \mathbf{R} (\mathbf{D}_k \boldsymbol{v}) = \boldsymbol{v}^\top \mathbf{D}_k^\top \mathbf{R} \mathbf{D}_k \boldsymbol{v} \quad \Leftarrow \text{只有二次项}
+$$
 
 #### (C) 二次项
 
-注意此处权重是 `ρ·I`（不是 R），所以 Hessian 贡献与 2.9 同构但用 I 替换 R：
-```
-H_ρ/2 = ρ·Σ_{k=1}^{K} D_k'·D_k
+$\mathbf{D}_k^\top \mathbf{R} \mathbf{D}_k$ 是 $3(K+1) \times 3(K+1)$ 矩阵，**只在 4 个 $3 \times 3$ 块上非零**：
+
+$$
+\begin{aligned}
+\text{块}\ (k, k) &: \quad \mathbf{I}^\top \mathbf{R} \mathbf{I} = +\mathbf{R} \quad \Leftarrow v_k \text{对角} \\
+\text{块}\ (k, k-1) &: \quad \mathbf{I}^\top \mathbf{R} (-\mathbf{I}) = -\mathbf{R} \quad \Leftarrow v_k \text{与}\ v_{k-1} \text{交叉} \\
+\text{块}\ (k-1, k) &: \quad (-\mathbf{I})^\top \mathbf{R} \mathbf{I} = -\mathbf{R} \quad \Leftarrow v_{k-1} \text{与}\ v_k \text{交叉} \\
+\text{块}\ (k-1, k-1) &: \quad (-\mathbf{I})^\top \mathbf{R} (-\mathbf{I}) = +\mathbf{R} \quad \Leftarrow v_{k-1} \text{对角}
+\end{aligned}
+$$
+
+对 $k=1..K$ 求和（前乘 2 抵消 HPIPM 的 0.5），得到 $(K+1) \times (K+1)$ **三对角块矩阵**：
+
+$$
+\frac{\mathbf{H}_u}{2} = \begin{bmatrix} \mathbf{R} & -\mathbf{R} & \mathbf{0} & \cdots & \mathbf{0} & \mathbf{0} \\ -\mathbf{R} & 2\mathbf{R} & -\mathbf{R} & \cdots & \mathbf{0} & \mathbf{0} \\ \mathbf{0} & -\mathbf{R} & 2\mathbf{R} & \cdots & \mathbf{0} & \mathbf{0} \\ \vdots & \vdots & \vdots & \ddots & \vdots & \vdots \\ \mathbf{0} & \mathbf{0} & \mathbf{0} & \cdots & 2\mathbf{R} & -\mathbf{R} \\ \mathbf{0} & \mathbf{0} & \mathbf{0} & \cdots & -\mathbf{R} & \mathbf{R} \end{bmatrix} \begin{matrix} v_0 \\ v_1 \\ v_2 \\ \vdots \\ v_{K-1} \\ v_K \end{matrix}
+$$
+
+- **对角块**：首尾（$v_0$、$v_K$）为 $\mathbf{R}$（只被一个 $\mathbf{D}_k$ 覆盖），中间为 $2\mathbf{R}$（被两个相邻 $\mathbf{D}_k$ 覆盖）
+- **相邻非对角块**：$-\mathbf{R}$（差分交叉项）
+- **非相邻块**：$\mathbf{0}$
+
+#### (B) 一次项 / (A) 常数项
+
+**均为 0**（因 $\mathbf{u}_k$ 完全由 $\boldsymbol{v}$ 线性表达，无常数偏移）：
+
+$$
+\mathbf{g}_u = \mathbf{0}, \quad \text{const}_u = 0
+$$
+
+#### 代码对应
+
+```matlab
+% 对应代码 (§8) — 只有二次项:
+H_u = H_u + 2 * D_k' * R * D_k;    % (C) 二次
+% g_u = 0, const_u = 0 (无常数偏移)
 ```
 
-三对角块结构（与 H_u 同形，(K+1)×(K+1) 块，把 R 换成 ρ·I）：
-```
-            v_0     v_1     v_2    ...   v_{K-1}   v_K
-H_ρ/2 = ρ·[  I      -I       0     ...     0        0  ]
-            [ -I      2I     -I    ...     0        0  ]
-            [  0      -I      2I   ...     0        0  ]
-            [  ...                               ]
-            [  0       0       0    ...     2I      -I  ]
-            [  0       0       0    ...    -I        I  ]
-```
+### 2.8 ③ RSS 强凸正则化 $\rho \|\mathbf{u}_k - \hat{\mathbf{u}}_k\|^2$
+
+#### 展开形式
+
+由 §2.7 知 $\mathbf{u}_k = \mathbf{D}_k \boldsymbol{v}$，所以：
+
+$$
+\mathbf{u}_k - \hat{\mathbf{u}}_k = \mathbf{D}_k \boldsymbol{v} - \hat{\mathbf{u}}_k
+$$
+
+其中 $\hat{\mathbf{u}}_k$ 是上次迭代解（**已知常数向量**）。代入代价：
+
+$$
+\rho \|\mathbf{u}_k - \hat{\mathbf{u}}_k\|^2 = \rho (\mathbf{D}_k \boldsymbol{v} - \hat{\mathbf{u}}_k)^\top (\mathbf{D}_k \boldsymbol{v} - \hat{\mathbf{u}}_k) = \rho \big[ \underbrace{\hat{\mathbf{u}}_k^\top \hat{\mathbf{u}}_k}_{\text{常数}} - \underbrace{2 \hat{\mathbf{u}}_k^\top \mathbf{D}_k \boldsymbol{v}}_{\text{一次项}} + \underbrace{\boldsymbol{v}^\top \mathbf{D}_k^\top \mathbf{D}_k \boldsymbol{v}}_{\text{二次项}} \big]
+$$
+
+#### (C) 二次项
+
+注意此处权重是 $\rho \mathbf{I}$（不是 $\mathbf{R}$），所以 Hessian 贡献与 §2.7 同构但用 $\mathbf{I}$ 替换 $\mathbf{R}$：
+
+$$
+\mathbf{H}_\rho = 2 \rho \sum_{k=1}^{K} \mathbf{D}_k^\top \mathbf{D}_k
+$$
+
+三对角块结构（与 $\mathbf{H}_u$ 同形，把 $\mathbf{R}$ 换成 $\rho \mathbf{I}$）：
+
+$$
+\frac{\mathbf{H}_\rho}{2} = \rho \begin{bmatrix} \mathbf{I} & -\mathbf{I} & \mathbf{0} & \cdots & \mathbf{0} & \mathbf{0} \\ -\mathbf{I} & 2\mathbf{I} & -\mathbf{I} & \cdots & \mathbf{0} & \mathbf{0} \\ \mathbf{0} & -\mathbf{I} & 2\mathbf{I} & \cdots & \mathbf{0} & \mathbf{0} \\ \vdots & \vdots & \vdots & \ddots & \vdots & \vdots \\ \mathbf{0} & \mathbf{0} & \mathbf{0} & \cdots & 2\mathbf{I} & -\mathbf{I} \\ \mathbf{0} & \mathbf{0} & \mathbf{0} & \cdots & -\mathbf{I} & \mathbf{I} \end{bmatrix} \begin{matrix} v_0 \\ v_1 \\ v_2 \\ \vdots \\ v_{K-1} \\ v_K \end{matrix}
+$$
 
 #### (B) 一次项
 
-```
-g_ρ = 2ρ·Σ_{k=1}^{K} D_k'·δ_k = -2ρ·Σ_{k=1}^{K} D_k'·û_k
-```
+$$
+\mathbf{g}_\rho = -2 \rho \sum_{k=1}^{K} \mathbf{D}_k^\top \hat{\mathbf{u}}_k
+$$
 
-逐 k 展开（δ_k = -û_k）：
-- k=1: `D_1'·(-û_1) = [-I; I; 0; ...]·(-û_1)`
-  - 第 0 块（v_0）得 `+û_1`
-  - 第 1 块（v_1）得 `-û_1`
-- k=2..K-1: `D_k'·(-û_k) = [0,..,-I(块k-1); I(块k); 0,..]·(-û_k)`
-  - 第 k 块得 `-û_k`
-  - 第 k-1 块得 `+û_k`
-- k=K: `D_K'·(-û_K) = [0,..,-I(块K-1); I(块K)]·(-û_K)`
-  - 第 K 块（v_K）得 `-û_K`
-  - 第 K-1 块（v_{K-1}）得 `+û_K`
+逐 $k$ 展开（$\mathbf{D}_k^\top \hat{\mathbf{u}}_k$ 在每个块上的贡献）：
 
-即 `g_ρ` 在每个块 j 上的贡献为（j=0..K）：
-```
-块 0 (v_0):    +2ρ·û_1                       (仅 k=1 贡献 +û_1)
-块 j (1..K-1): -2ρ·û_j + 2ρ·û_{j+1}          (k=j 的 -û_j + k=j+1 的 +û_{j+1})
-块 K (v_K):    -2ρ·û_K                        (k=K 的 -û_K, v_K 块)
-```
+$$
+\begin{aligned}
+k=1 &: \quad \mathbf{D}_1^\top \hat{\mathbf{u}}_1 \to v_0 \text{块}: -\hat{\mathbf{u}}_1,\ v_1 \text{块}: +\hat{\mathbf{u}}_1 \\
+k=2..K-1 &: \quad \mathbf{D}_k^\top \hat{\mathbf{u}}_k \to v_{k-1} \text{块}: -\hat{\mathbf{u}}_k,\ v_k \text{块}: +\hat{\mathbf{u}}_k \\
+k=K &: \quad \mathbf{D}_K^\top \hat{\mathbf{u}}_K \to v_{K-1} \text{块}: -\hat{\mathbf{u}}_K,\ v_K \text{块}: +\hat{\mathbf{u}}_K
+\end{aligned}
+$$
+
+即 $\mathbf{g}_\rho$ 在每个块 $j$ 上的总贡献（$j=0..K$）：
+
+$$
+\begin{aligned}
+\text{块}\ 0\ (v_0) &: \quad -2\rho \hat{\mathbf{u}}_1 \quad \text{(仅}\ k=1\ \text{贡献)} \\
+\text{块}\ j\ (1..K-1) &: \quad +2\rho \hat{\mathbf{u}}_j - 2\rho \hat{\mathbf{u}}_{j+1} \quad \text{(}k=j \text{的} +\hat{\mathbf{u}}_j \text{和} k=j+1 \text{的} -\hat{\mathbf{u}}_{j+1}\text{)} \\
+\text{块}\ K\ (v_K) &: \quad +2\rho \hat{\mathbf{u}}_K \quad \text{(仅}\ k=K\ \text{贡献)}
+\end{aligned}
+$$
 
 #### (A) 常数项
 
-```
-objective_constant += ρ·Σ_{k=1}^{K} ‖δ_k‖² = ρ·Σ_{k=1}^{K} ‖û_k‖²
-```
+$$
+\text{const}_\rho = \rho \sum_{k=1}^{K} \|\hat{\mathbf{u}}_k\|^2
+$$
 
-### 2.11 v_0 与 v_K 的处理
+#### 代码对应
 
-**已采用方案**：把 `v_0` 和 `v_K` 都放进 v 中。
-
-**特点**：
-- v 含 `v_0, v_1, ..., v_K` 共 K+1 块（3(K+1) = 21 维）
-- `v_0` 靠等式约束 `v_0 = current_nu` 锁定（3 条等式约束）
-- **v_K 在 v 中**：跟踪代价不依赖它（H_track 的 v_K 行/列 = 0），但**控制正则和 RSS 正则含 u_K**（k=1..K，与 V1 一致）
-- `u_k = v_k - v_{k-1}` 对 k=1..K 成立，**d_k=0 for all k**（v_0 在 v 中，无常数项）
-
-**与 V1 的关系**：V2 含 v_K，控制正则和 RSS 正则的求和范围 k=1..K 与 V1 完全一致。**V1 与 V2 严格等价**（详见第 4 节）。
-
-**已同步修订的章节**：
-- 2.1 节：v = [v_0;...;v_K]，3(K+1) 维
-- 2.3 节：I_k 维度 3×3(K+1)，前 k 块为 I（含 v_0，不含 v_K）
-- 2.7 节：H_track 维度 3(K+1)×3(K+1)，v_0 行/列 = K·Q_B，v_K 行/列 = 0
-- 2.9 节：D_k k=1..K（含 u_K），三对角块矩阵 (K+1)×(K+1) 块（首尾 R）
-- 2.10 节：同 2.9，k=1..K（含 u_K），三对角块矩阵 (K+1)×(K+1) 块
-
-## 3. 对比表
-
-| 项 | V1（当前） | V2（新） |
-|---|---|---|
-| H 构造方式 | 逐 k 展开填充，双重循环 | 选择矩阵乘法 `Σ (B·I_k)'·Q·(B·I_k)` |
-| g 构造方式 | 逐 k 填 `2·w·dt·grad_dir` | `Σ 2·I_k'·B'·Q·c_k` |
-| objective_constant | 逐 k 累加 `w·‖c_k‖²` | `Σ_k c_k'Q c_k` |
-| 是否拆分位置/姿态 | 是（分开循环） | 否（统一用 3 维 Q，B 自动处理） |
-| 旋转矩阵 R 处理 | 每步手动乘 R_psi0 | 编码进 B 矩阵 |
-| 参考轨迹变化 | c_k 随 k 变化 | c_k 随 k 变化（含 ref_xy_k） |
-| v_0 的处理 | current_nu 作常数，不出现在决策变量中 | v_0 放进 v 中（v 含 v_0..v_K，3(K+1) 维），靠等式约束 `v_0=current_nu` 锁定 |
-| v_K 的处理 | nu(:,K) 作为独立变量参与 | **v_K 放进 v 中**，参与控制/RSS 正则 k=1..K（与 V1 一致），不参与跟踪代价（H_track 的 v_K 行/列 = 0） |
-| 控制正则 u'Ru 的 H 形态 | u 块纯对角（`2·w_control·I`） | v 块三对角块（`2·Σ D_k'R·D_k`，对角 2R/边界 R，相邻 -R），**g_u=0, const_u=0** |
-| RSS 正则 ρ·‖u-û‖² 的 H 形态 | u 块纯对角（`2·ρ·I`） | v 块三对角块（`2ρ·Σ D_k'·D_k`，对角 2ρI/边界 ρI，相邻 -ρI） |
-| u 与 nu 的耦合 | 通过等式约束 `A·x=b` 显式连接 | 通过差分 `u_k = v_k - v_{k-1}` 隐式消元（u 不再独立），v_0 靠等式约束锁定 |
-| 等式约束数 | 18（动力学递推） | 3（仅 v_0 = current_nu） |
-| 实现复杂度 | 高（多个嵌套循环） | 低（矩阵乘法，可向量化） |
-
-## 4. V1 vs V2 理论等价性分析
-
-### 4.1 核心结论
-
-**V1 与 V2 严格等价**：V2 的 v 含 `v_0..v_K`（3(K+1) 维），控制正则和 RSS 正则的求和范围 `k=1..K`（含 u_K）与 V1 完全一致。两者代价函数在 V1 等式约束消元后**完全相同**，最优解、目标值、KKT 系统均严格一致。
-
-### 4.2 代价函数逐项对比
-
-```
-V1:  J = Σ_{k=1}^K [e_k'Q e_k]  + Σ_{k=1}^K [w_control·‖u_k‖²]  + Σ_{k=1}^K [ρ·‖u_k-û_k‖²]
-                                    ↑ k=1..K (含 u_K)              ↑ k=1..K (含 u_K)
-
-V2:  J = Σ_{k=1}^K [e_k'Q e_k]  + Σ_{k=1}^{K} [w_control·‖u_k‖²]  + Σ_{k=1}^{K} [ρ·‖u_k-û_k‖²]
-                                    ↑ k=1..K (含 u_K)              ↑ k=1..K (含 u_K)
+```matlab
+% 对应代码 (§8) — 三部分:
+H_rho     = H_rho     + 2 * rho * D_k' * D_k;                    % (C) 二次
+g_rho     = g_rho     - 2 * rho * D_k' * u_hat(:, k);             % (B) 一次
+const_rho = const_rho +       rho * u_hat(:, k)' * u_hat(:, k);   % (A) 常数
 ```
 
-- **跟踪代价**：完全相同（k=1..K，e_k 不依赖 v_K）
-- **控制正则**：完全相同（k=1..K，含 u_K = v_K - v_{K-1}）
-- **RSS 正则**：完全相同（k=1..K，含 u_K - û_K）
+## 3. V1 vs V2 理论等价性分析
 
-> 与早期版本（v 不含 v_K）的差异：早期 V2 缺 u_K 的正则贡献，仅为近似等价；当前版本 v 含 v_K 后，V1 与 V2 严格等价。
+### 3.1 核心结论
 
-### 4.3 约束消元关系（完全等价）
+**V1 与 V2 严格等价**：V2 的 $\boldsymbol{v}$ 含 $v_0..v_K$（$3(K+1)$ 维），控制正则和 RSS 正则的求和范围 $k=1..K$（含 $u_K$）与 V1 完全一致。两者代价函数在 V1 等式约束消元后**完全相同**，最优解、目标值、KKT 系统均严格一致。
 
-V1 的等式约束 `ν_{k+1} = ν_k + u_{k+1}` 可以显式求解 u：
-```
-u(:,1)   = nu(:,1) - current_nu          (初始条件)
-u(:,k+1) = nu(:,k+1) - nu(:,k)            (递推, k=1..K-1)
-```
+### 3.2 代价函数逐项对比
 
-代入 V1 代价，消去 u 后只剩 nu 作为决策变量。**V2 的 v 正是消元后的 nu**：
-- V2 的 `v_0` ↔ V1 的 `current_nu`（已知常数，V2 靠等式约束锁定）
-- V2 的 `v_k` ↔ V1 的 `nu(:,k)` for k=1..K（V2 含 v_K ↔ V1 的 nu(:,K)）
-- V2 的 `u_k = v_k - v_{k-1}` ↔ V1 的 `u(:,k) = nu(:,k) - nu(:,k-1)`
+$$
+\begin{aligned}
+\text{V1: } J &= \sum_{k=1}^{K} [\mathbf{e}_k^\top \mathbf{Q} \mathbf{e}_k] + \sum_{k=1}^{K} [w_{\text{ctrl}} \cdot \|\mathbf{u}_k\|^2] + \sum_{k=1}^{K} [\rho \cdot \|\mathbf{u}_k - \hat{\mathbf{u}}_k\|^2] \\
+& \hspace{3.5cm} \uparrow_{k=1..K\ (\text{含}\ u_K)} \hspace{1.2cm} \uparrow_{k=1..K\ (\text{含}\ u_K)} \\
+\text{V2: } J &= \sum_{k=1}^{K} [\mathbf{e}_k^\top \mathbf{Q} \mathbf{e}_k] + \sum_{k=1}^{K} [w_{\text{ctrl}} \cdot \|\mathbf{u}_k\|^2] + \sum_{k=1}^{K} [\rho \cdot \|\mathbf{u}_k - \hat{\mathbf{u}}_k\|^2] \\
+& \hspace{3.5cm} \uparrow_{k=1..K\ (\text{含}\ u_K)} \hspace{1.2cm} \uparrow_{k=1..K\ (\text{含}\ u_K)}
+\end{aligned}
+$$
 
-消元后 V1 的决策变量维度 18（nu_1..nu_K），V2 的自由变量维度 18（v_1..v_K，v_0 被等式约束锁定）。**两者完全等价**。
+- **跟踪代价**：完全相同（$k=1..K$，$\mathbf{e}_k$ 不依赖 $v_K$）
+- **控制正则**：完全相同（$k=1..K$，含 $u_K = v_K - v_{K-1}$）
+- **RSS 正则**：完全相同（$k=1..K$，含 $u_K - \hat{\mathbf{u}}_K$）
 
-### 4.4 H 矩阵的关系（非逐元素相等，但经约束消元后严格等价）
+> 与早期版本（$\boldsymbol{v}$ 不含 $v_K$）的差异：早期 V2 缺 $u_K$ 的正则贡献，仅为近似等价；当前版本 $\boldsymbol{v}$ 含 $v_K$ 后，V1 与 V2 严格等价。
 
-V1 的 H（36×36，u 和 nu 独立）：
-```
-H_V1 = [ 2(w_control+ρ)·I    0         ]    ← u 块纯对角 (18×18)
-       [     0               H_track_V1 ]   ← nu 块跨阶段 (18×18, nu_1..nu_K)
-       └── u 块 ──┘  └─ nu 块 ─┘
-```
+### 3.3 约束消元关系（完全等价）
 
-V2 的 H（21×21，v 含 v_0..v_K = 3(K+1) = 21 维）：
-```
-H_V2 = H_track                            ← 跟踪项 (v_0 行/列=K·Q_B, v_K 行/列=0)
-     + 2·Σ_{k=1}^{K} D_k'R·D_k           ← 控制项消元后贡献 ((K+1)×(K+1) 三对角块)
-     + 2ρ·Σ_{k=1}^{K} D_k'D_k             ← RSS 项消元后贡献 ((K+1)×(K+1) 三对角块)
-```
+V1 的等式约束 $\nu_{k+1} = \nu_k + u_{k+1}$ 可以显式求解 $\mathbf{u}$：
+
+$$
+\begin{aligned}
+\mathbf{u}(:,1)   &= \nu(:,1) - v_0^{\text{cur}} \quad &\text{(初始条件)} \\
+\mathbf{u}(:,k+1) &= \nu(:,k+1) - \nu(:,k) \quad &\text{(递推, } k=1..K-1\text{)}
+\end{aligned}
+$$
+
+代入 V1 代价，消去 $\mathbf{u}$ 后只剩 $\nu$ 作为决策变量。**V2 的 $\boldsymbol{v}$ 正是消元后的 $\nu$**：
+- V2 的 $v_0$ ↔ V1 的 $v_0^{\text{cur}}$（已知常数，V2 靠等式约束锁定）
+- V2 的 $v_k$ ↔ V1 的 $\nu(:,k)$ for $k=1..K$（V2 含 $v_K$ ↔ V1 的 $\nu(:,K)$）
+- V2 的 $\mathbf{u}_k = v_k - v_{k-1}$ ↔ V1 的 $\mathbf{u}(:,k) = \nu(:,k) - \nu(:,k-1)$
+
+消元后 V1 的决策变量维度 18（$\nu_1..\nu_K$），V2 的自由变量维度 18（$v_1..v_K$，$v_0$ 被等式约束锁定）。**两者完全等价**。
+
+### 3.4 $\mathbf{H}$ 矩阵的关系（非逐元素相等，但经约束消元后严格等价）
+
+V1 的 $\mathbf{H}$（$36 \times 36$，$\mathbf{u}$ 和 $\nu$ 独立）：
+
+$$
+\mathbf{H}_{V1} = \begin{bmatrix} 2(w_{\text{ctrl}}+\rho) \cdot \mathbf{I} & \mathbf{0} \\ \mathbf{0} & \mathbf{H}_{\text{track,V1}} \end{bmatrix} \begin{matrix} \leftarrow \mathbf{u} \text{块纯对角}\ (18 \times 18) \\ \leftarrow \nu \text{块跨阶段}\ (18 \times 18, \nu_1..\nu_K) \end{matrix}
+$$
+
+V2 的 $\mathbf{H}$（$21 \times 21$，$\boldsymbol{v}$ 含 $v_0..v_K = 3(K+1) = 21$ 维）：
+
+$$
+\mathbf{H}_{V2} = \underbrace{\mathbf{H}_{\text{track}}}_{\text{跟踪项}\ (v_0 \text{行/列} = K\mathbf{Q}_B,\ v_K \text{行/列} = \mathbf{0})} + \underbrace{2 \sum_{k=1}^{K} \mathbf{D}_k^\top \mathbf{R} \mathbf{D}_k}_{\text{控制项消元后贡献}\ ((K+1) \times (K+1)\ \text{三对角块})} + \underbrace{2\rho \sum_{k=1}^{K} \mathbf{D}_k^\top \mathbf{D}_k}_{\text{RSS 项消元后贡献}\ ((K+1) \times (K+1)\ \text{三对角块})}
+$$
 
 **关键点**：
-- `H_V2` ≠ `H_V1` 的任何子矩阵（两者维度不同：21×21 vs 36×36）
-- `H_V2` = `T'·H_V1·T` **严格成立**，其中 `T` 是 36×21 的消元矩阵（见 4.5）
-- v_0 行/列在 H_V2 中有非零贡献（K·Q_B + R + ρ·I），但被等式约束 `v_0=current_nu` 锁定
-- v_K 行/列在 H_track 中为 0，但在 H_u 和 H_ρ 中为 R 和 ρ·I（被 D_K 覆盖一次）
-- 两者**不能逐元素对比**，需通过约束消元矩阵 T 验证严格等价性
+- $\mathbf{H}_{V2} \ne$ $\mathbf{H}_{V1}$ 的任何子矩阵（两者维度不同：$21 \times 21$ vs $36 \times 36$）
+- $\mathbf{H}_{V2} = \mathbf{T}^\top \mathbf{H}_{V1} \mathbf{T}$ **严格成立**，其中 $\mathbf{T}$ 是 $36 \times 21$ 的消元矩阵（见 §3.5）
+- $v_0$ 行/列在 $\mathbf{H}_{V2}$ 中有非零贡献（$K\mathbf{Q}_B + \mathbf{R} + \rho \mathbf{I}$），但被等式约束 $v_0 = v_0^{\text{cur}}$ 锁定
+- $v_K$ 行/列在 $\mathbf{H}_{\text{track}}$ 中为 $\mathbf{0}$，但在 $\mathbf{H}_u$ 和 $\mathbf{H}_\rho$ 中为 $\mathbf{R}$ 和 $\rho \mathbf{I}$（被 $\mathbf{D}_K$ 覆盖一次）
+- 两者**不能逐元素对比**，需通过约束消元矩阵 $\mathbf{T}$ 验证严格等价性
 
-### 4.5 等价性验证方法
+### 3.5 等价性验证方法
 
-由于 H 维度不同，采用以下三种验证：
+由于 $\mathbf{H}$ 维度不同，采用以下三种验证：
 
 **(1) 最优解一致性**（最直接）：
-```
-V1 解: x* = [u*(1..18); nu*(1..18)]  (36维)
-V2 解: v* = [v_0*; v_1*; ...; v_K*]  (21维, v 含 v_0 和 v_K)
 
-验证: v_0* == current_nu          (等式约束锁定)
-      v_k* == nu*(:,k)            for k=1..K    (严格相等)
-      u_k* == v_k* - v_{k-1}*     for k=1..K    (差分关系)
-```
+$$
+\begin{aligned}
+\text{V1 解: } \boldsymbol{x}^* &= [\mathbf{u}^*(1..18);\ \nu^*(1..18)] \quad (36\text{维}) \\
+\text{V2 解: } \boldsymbol{v}^* &= [v_0^*;\ v_1^*;\ \ldots;\ v_K^*] \quad (21\text{维}, \boldsymbol{v} \text{含}\ v_0 \text{和}\ v_K) \\
+\text{验证: } v_0^* &\stackrel{!}{=} v_0^{\text{cur}} \quad \text{(等式约束锁定)} \\
+v_k^* &\stackrel{!}{=} \nu^*(:,k) \quad \text{for}\ k=1..K \quad \text{(严格相等)} \\
+\mathbf{u}_k^* &\stackrel{!}{=} v_k^* - v_{k-1}^* \quad \text{for}\ k=1..K \quad \text{(差分关系)}
+\end{aligned}
+$$
 
 **(2) 目标值一致性**：
-```
-obj_V1 = 0.5·x*'·H_V1·x* + g_V1'·x* + const_V1
-obj_V2 = 0.5·v*'·H_V2·v* + g_V2'·v* + const_V2
-验证: obj_V1 == obj_V2   (严格相等, 无差异)
-```
+
+$$
+\begin{aligned}
+\text{obj}_{V1} &= \tfrac{1}{2} \boldsymbol{x}^{*\top} \mathbf{H}_{V1} \boldsymbol{x}^* + \mathbf{g}_{V1}^\top \boldsymbol{x}^* + \text{const}_{V1} \\
+\text{obj}_{V2} &= \tfrac{1}{2} \boldsymbol{v}^{*\top} \mathbf{H}_{V2} \boldsymbol{v}^* + \mathbf{g}_{V2}^\top \boldsymbol{v}^* + \text{const}_{V2} \\
+\text{验证: } &\text{obj}_{V1} \stackrel{!}{=} \text{obj}_{V2} \quad \text{(严格相等, 无差异)}
+\end{aligned}
+$$
 
 **(3) KKT 系统一致性**（最严格）：
-```
-V1 的 KKT: [H_V1  A_V1'] [x*]   [-g_V1]
-           [A_V1  0   ] [λ*] = [b_V1 ]
 
-V2 的 KKT: [H_V2  A_V2'] [v*]   [-g_V2]
-           [A_V2  0   ] [μ*] = [b_V2 ]
-           (A_V2 = [I, 0, ..., 0], b_V2 = current_nu, 锁定 v_0)
-```
+$$
+\text{V1 的 KKT:} \quad \begin{bmatrix} \mathbf{H}_{V1} & \mathbf{A}_{V1}^\top \\ \mathbf{A}_{V1} & \mathbf{0} \end{bmatrix} \begin{bmatrix} \boldsymbol{x}^* \\ \boldsymbol{\lambda}^* \end{bmatrix} = \begin{bmatrix} -\mathbf{g}_{V1} \\ \mathbf{b}_{V1} \end{bmatrix}
+$$
 
-V1 经约束消元后**严格退化为 V2**。消元矩阵 `T`（36×21）满足：
-```
-H_V2 = T'·H_V1·T    (严格相等)
-g_V2 = T'·g_V1       (严格相等)
-const_V2 = const_V1  (严格相等)
-```
+$$
+\text{V2 的 KKT:} \quad \begin{bmatrix} \mathbf{H}_{V2} & \mathbf{A}_{V2}^\top \\ \mathbf{A}_{V2} & \mathbf{0} \end{bmatrix} \begin{bmatrix} \boldsymbol{v}^* \\ \boldsymbol{\mu}^* \end{bmatrix} = \begin{bmatrix} -\mathbf{g}_{V2} \\ \mathbf{b}_{V2} \end{bmatrix}, \quad (\mathbf{A}_{V2} = [\mathbf{I}, \mathbf{0}, \ldots, \mathbf{0}],\ \mathbf{b}_{V2} = v_0^{\text{cur}},\ \text{锁定}\ v_0)
+$$
 
-其中 T 的构造（V2 的 v ↔ V1 的 x = [u; nu]）：
-- u 块（k=1..K）：`u_k = v_k - v_{k-1}`，即 T 的 u 行在 v 的第 k 块为 I、第 k-1 块为 -I
-- nu 块（k=1..K）：`nu_k = v_k`，即 T 的 nu 行在 v 的第 k 块为 I
+V1 经约束消元后**严格退化为 V2**。消元矩阵 $\mathbf{T}$（$36 \times 21$）满足：
 
-### 4.6 二次约束的等价性
+$$
+\mathbf{H}_{V2} = \mathbf{T}^\top \mathbf{H}_{V1} \mathbf{T} \quad \text{(严格相等)}, \quad \mathbf{g}_{V2} = \mathbf{T}^\top \mathbf{g}_{V1} \quad \text{(严格相等)}, \quad \text{const}_{V2} = \text{const}_{V1} \quad \text{(严格相等)}
+$$
 
-V1 的二次约束（轮速 SOC + 转向锥）依赖 `nu(:,k)`，V2 的 v 含 v_0..v_K：
+其中 $\mathbf{T}$ 的构造（V2 的 $\boldsymbol{v}$ ↔ V1 的 $\boldsymbol{x} = [\mathbf{u}; \nu]$）：
+- $\mathbf{u}$ 块（$k=1..K$）：$\mathbf{u}_k = v_k - v_{k-1}$，即 $\mathbf{T}$ 的 $\mathbf{u}$ 行在 $\boldsymbol{v}$ 的第 $k$ 块为 $\mathbf{I}$、第 $k-1$ 块为 $-\mathbf{I}$
+- $\nu$ 块（$k=1..K$）：$\nu_k = v_k$，即 $\mathbf{T}$ 的 $\nu$ 行在 $\boldsymbol{v}$ 的第 $k$ 块为 $\mathbf{I}$
 
-- **轮速约束** `‖H_n·nu(:,k)‖ ≤ vimax`：在 v 的第 k 块（v_k，k=1..K）上构造，**V2 与 V1 完全一致**（V1 k=1..K，V2 k=1..K，均含 v_K ↔ nu_K）
-- **转向锥约束** `C^k_{i,n}(u, û) ≤ 0`：V1 中依赖 u 和 nu_hat，V2 中 u = D·v（d=0），需将 u 替换为 v 的差分，约束结构稍变但**数学等价**
+### 3.6 二次约束的等价性
 
-### 4.7 数值预期
+V1 的二次约束（轮速 SOC + 转向锥）依赖 $\nu(:,k)$，V2 的 $\boldsymbol{v}$ 含 $v_0..v_K$：
 
-如果 V2 实现正确（v 含 v_0..v_K，3(K+1)=21 维）：
-- **最优解**：`v_0*` 应严格等于 current_nu（等式约束锁定），`v_k*`（k=1..K）应**严格等于** V1 的 `nu*(:,k)`
-- **目标值**：`obj_V2` 应**严格等于** V1 的 `obj_V1`（无 u_K 差异）
-- **求解时间**：V2 消去了 15 条等式约束（18→3），决策变量维度从 36 降为 21，**预期求解更快**
+- **轮速约束** $\|\mathbf{H}_n \cdot \nu(:,k)\| \le v_{\max}$：在 $\boldsymbol{v}$ 的第 $k$ 块（$v_k$，$k=1..K$）上构造，**V2 与 V1 完全一致**（V1 $k=1..K$，V2 $k=1..K$，均含 $v_K$ ↔ $\nu_K$）
+- **转向锥约束** $C^k_{i,n}(\mathbf{u}, \hat{\mathbf{u}}) \le 0$：V1 中依赖 $\mathbf{u}$ 和 $\hat{\nu}$，V2 中 $\mathbf{u} = \mathbf{D}\boldsymbol{v}$，需将 $\mathbf{u}$ 替换为 $\boldsymbol{v}$ 的差分，约束结构稍变但**数学等价**
+
+### 3.7 数值预期
+
+如果 V2 实现正确（$\boldsymbol{v}$ 含 $v_0..v_K$，$3(K+1)=21$ 维）：
+- **最优解**：$v_0^*$ 应严格等于 $v_0^{\text{cur}}$（等式约束锁定），$v_k^*$（$k=1..K$）应**严格等于** V1 的 $\nu^*(:,k)$
+- **目标值**：$\text{obj}_{V2}$ 应**严格等于** V1 的 $\text{obj}_{V1}$（无 $u_K$ 差异）
+- **求解时间**：V2 消去了 15 条等式约束（$18 \to 3$），决策变量维度从 36 降为 21，**预期求解更快**
 - **RMSE/J_total**：应与基准 `[proposed-3iter: paper_fixed]` 严格一致（RMSE=0.036793, J_total=13.3838）
 
-## 5. 待讨论的问题
+## 4. 待讨论的问题
 
-1. ~~**c_k 是否随 k 变化**~~：**已解决**。见 2.2 节，`c_k = current_xy - ref_xy_k`，含 `ref_xy_k`，随 k 变化（v_0 在 v 中，不进 c_k）。
-2. ~~**B 的确切形式**~~：**已解决**。见 2.8 节，`B = [R(ψ0)·dt, 0; 0, dt]`（3×3 分块对角），对应位置旋转 + 姿态标量积分。
-3. ~~**v_0 的处理**~~：**已解决**。见 2.1、2.11 节，`v_0 = current_nu` 放进 v 中（v 含 v_0..v_K，3(K+1)=21 维），靠 3 条等式约束 `v_0=current_nu` 锁定。
-4. ~~**u_k'R u_k 和 ρ·‖u-û‖² 的处理**~~：**已解决**。见 2.9、2.10 节，通过差分矩阵 `D_k` 表达 `u_k = D_k·v`（d_k=0），Hessian 退化为 v 块三对角块结构。
-5. ~~**u_K 的处理**~~：**已解决**。见 2.11 节，v 含 v_K，u_K = v_K - v_{K-1} 自然进入差分表达，k=1..K 与 V1 一致。
-6. ~~**数值验证**~~：**已分析**。见第 4 节，V1 与 V2 严格等价（约束消元关系），H 不可逐元素对比，需通过最优解/目标值/KKT 系统验证。
+1. ~~**$\mathbf{c}_k$ 是否随 $k$ 变化**~~：**已解决**。见 §2.2，$\mathbf{c}_k = \boldsymbol{\xi}_{\text{cur}} - \boldsymbol{\xi}_k^{\text{ref}}$，含 $\boldsymbol{\xi}_k^{\text{ref}}$，随 $k$ 变化（$v_0$ 在 $\boldsymbol{v}$ 中，不进 $\mathbf{c}_k$）。
+2. ~~**$\mathbf{B}$ 的确切形式**~~：**已解决**。见 §2.6.2，$\mathbf{B} = \begin{bmatrix} \mathbf{R}(\psi_0) \cdot \tau & \mathbf{0} \\ \mathbf{0} & \tau \end{bmatrix}$（$3 \times 3$ 分块对角），对应位置旋转 + 姿态标量积分。
+3. ~~**$v_0$ 的处理**~~：**已解决**。见 §2.1，$v_0 = v_0^{\text{cur}}$ 放进 $\boldsymbol{v}$ 中（$\boldsymbol{v}$ 含 $v_0..v_K$，$3(K+1)=21$ 维），靠 3 条等式约束 $v_0 = v_0^{\text{cur}}$ 锁定。
+4. ~~**$\mathbf{u}_k^\top \mathbf{R} \mathbf{u}_k$ 和 $\rho \|\mathbf{u} - \hat{\mathbf{u}}\|^2$ 的处理**~~：**已解决**。见 §2.7、§2.8，通过差分矩阵 $\mathbf{D}_k$ 表达 $\mathbf{u}_k = \mathbf{D}_k \boldsymbol{v}$（$v_0$ 在 $\boldsymbol{v}$ 中，无常数偏移），Hessian 退化为 $\boldsymbol{v}$ 块三对角块结构。
+5. ~~**$u_K$ 的处理**~~：**已解决**。$\boldsymbol{v}$ 含 $v_K$，$\mathbf{u}_K = v_K - v_{K-1}$ 自然进入差分表达，$k=1..K$ 与 V1 一致。
+6. ~~**数值验证**~~：**已分析**。见第 3 节，V1 与 V2 严格等价（约束消元关系），$\mathbf{H}$ 不可逐元素对比，需通过最优解/目标值/KKT 系统验证。
 
-## 6. 预期测试结果
+## 5. 预期测试结果
 
-基准为 [proposed-3iter: paper_fixed]：
+基准为 `[proposed-3iter: paper_fixed]`：
 - RMSE = 0.036793
 - medianSolveTime = NaNs
 - J_total = 13.3838
 - validSteps = 100/100
 
-如果 V2 正确，H/g/const 在**经等式约束消元后**应与 V1 严格等价（V1 的 u 块对角 ↔ V2 的 v 块三对角是消元前后的不同形态）。求解结果（最优解 x、目标值 obj_value）应**完全一致**。
+如果 V2 正确，H/g/const 在**经等式约束消元后**应与 V1 严格等价（V1 的 $\mathbf{u}$ 块对角 ↔ V2 的 $\boldsymbol{v}$ 块三对角是消元前后的不同形态）。求解结果（最优解 $\boldsymbol{x}$、目标值 obj_value）应**完全一致**。
 
-## 7. 待办
+## 6. 待办
 
-- [x] 明确 B 矩阵的确切形式（见 2.8）
-- [x] 明确 e_0 的定义（随 k 变化，含 ref_xy_k，见 2.2）
-- [x] 处理 v_0 = current_nu 的已知量分离（见 2.1、2.3、2.7）
-- [x] 展开 u_k'R u_k 和 ρ·‖u-û‖² 的选择矩阵表达（见 2.9、2.10，用差分矩阵 D_k）
-- [x] 决定 u_K 的处理方案（v_K 放进 v 中，见 2.11）
-- [x] 同步修订 2.1/2.3/2.7/2.9/2.10 的维度与 k 范围（已完成，含 v_K）
+- [x] 明确 $\mathbf{B}$ 矩阵的确切形式（见 §2.6.2）
+- [x] 明确 $\mathbf{e}_0$ 的定义（随 $k$ 变化，含 $\boldsymbol{\xi}_k^{\text{ref}}$，见 §2.2）
+- [x] 处理 $v_0 = v_0^{\text{cur}}$ 的已知量分离（见 §2.1、§2.3）
+- [x] 展开 $\mathbf{u}_k^\top \mathbf{R} \mathbf{u}_k$ 和 $\rho \|\mathbf{u} - \hat{\mathbf{u}}\|^2$ 的选择矩阵表达（见 §2.7、§2.8，用差分矩阵 $\mathbf{D}_k$）
+- [x] 决定 $u_K$ 的处理方案（$v_K$ 放进 $\boldsymbol{v}$ 中）
+- [x] 同步修订 §2.1/§2.3/§2.7/§2.8 的维度与 $k$ 范围（已完成，含 $v_K$）
 - [ ] 实现 V2 代码（仅测试，不替换 V1）
 - [ ] 对比 V1 和 V2 的 H/g/const（需先做等式约束消元，不能直接逐元素对比）
 - [ ] 对照基准结果
 
-## 8. V2 代码实现
+## 7. V2 代码实现
 
 > 以下为 V2 的完整 MATLAB 伪代码（仅文档，不替换 V1）。
 > 接口与 `construct_complete_qp_from_rss.m` 对齐，便于对照测试。
 > 转向锥约束暂标注 TODO，待后续实现。
 
 ```matlab
-function qp_problem = construct_complete_qp_from_rss_v2(path, step, current_nu, state, u_hat, params)
+function qp_problem = construct_complete_qp_from_rss_v2(path, step, v0, state, u_hat, params)
 % CONSTRUCT_COMPLETE_QP_FROM_RSS_V2
 % V2: 基于选择矩阵的 H/g/const 构造方法 (与 V1 严格等价)
 %
 % 特点:
 %   - 决策变量 v = [v_0; v_1; ...; v_K] (3(K+1) 维), u 通过差分消元
-%   - v_0 靠等式约束 v_0 = current_nu 锁定 (3 条)
+%   - v_0 靠等式约束 v_0 = v0 锁定 (3 条)
 %   - v_K 在 v 中 (参与控制/RSS 正则 k=1..K, 不参与跟踪代价)
 %   - H 用选择矩阵 I_k 和差分矩阵 D_k 构造, 无逐 k 双重循环
 
@@ -674,27 +657,29 @@ function qp_problem = construct_complete_qp_from_rss_v2(path, step, current_nu, 
     % =====================================================
 
     % B 矩阵 (2.8): 3×3, 编码车体系→世界系位移
-    B_mat = [R_psi0 * dt,   zeros(2,1);
+    B = [R_psi0 * dt,   zeros(2,1);
              zeros(1,2),       dt    ];
 
     % Q 矩阵 (3×3)
-    Q_mat = diag([w_pos, w_pos, w_psi]);
+    Q = diag([w_pos, w_pos, w_psi]);
 
     % Q_B = B'·Q·B (2.8): 3×3 等效权重
-    Q_B = B_mat' * Q_mat * B_mat;
+    Q_B = B' * Q * B;
     % 结果: [30*dt^2*I, 0; 0, dt^2]
 
     H_track = zeros(n_var, n_var);
     g_track = zeros(n_var, 1);
     const_track = 0;
 
-    for k = 1:K
+    for k = 1:K    % k=1 时 I_1 只选 v_0 块 (被等式约束锁定), e_1 为纯常数, 不影响最优解
         % 参考轨迹 (随 k 变化)
         ref_idx = min(size(path, 2), step + k);
         ref_xy_k  = path(1:2, ref_idx);
         ref_psi_k = path(3,   ref_idx);
 
         % c_k (2.2): 随 k 变化的常数部分, 3×1 (不含 v_0, 因为 v_0 在 v 中)
+        %   c_k = [ current_xy - ref_xy_k ]   ← 位置误差常数 (2×1)
+        %         [ psi0      - ref_psi_k ]   ← 姿态误差常数 (1×1)
         c_k = [current_xy - ref_xy_k;
                   psi0    - ref_psi_k];
 
@@ -704,45 +689,39 @@ function qp_problem = construct_complete_qp_from_rss_v2(path, step, current_nu, 
             I_k(:, l*3+1 : (l+1)*3) = eye(3);   % 从 v_0 块开始
         end
 
-        % M_k = B·I_k (2.4): 3×3(K+1), v_K 列为 0
-        M_k = B_mat * I_k;
+        % B·I_k (2.4): 直接在需要处用 B*I_k, 不引入中间变量
+        % v_K 列恒为 0 (因 I_k 的 v_K 列为 0)
 
         % 三部分分离 (2.5)
-        const_track = const_track + c_k' * Q_mat * c_k;          % (A) 常数
-        g_track     = g_track     + 2 * M_k' * Q_mat * c_k;      % (B) 一次
-        H_track     = H_track     + 2 * M_k' * Q_mat * M_k;      % (C) 二次
+        const_track = const_track + c_k' * Q * c_k;                       % (A) 常数
+        g_track     = g_track     + 2 * (B*I_k)' * Q * c_k;           % (B) 一次
+        H_track     = H_track     + 2 * (B*I_k)' * Q * (B*I_k);  % (C) 二次
     end
 
     %% =====================================================
     % 2. 控制正则化 u'Ru (2.9): H_u, g_u, const_u
-    % d_k = 0 for all k (v_0 在 v 中, 无常数项)
+    % u_k = D_k·v (v_0 在 v 中, 无常数偏移)
     % k=1..K (含 u_K = v_K - v_{K-1}, 与 V1 一致)
     % =====================================================
-    R_mat = w_control * eye(3);
+    R = w_control * eye(3);
 
     H_u = zeros(n_var, n_var);
-    g_u = zeros(n_var, 1);      % 全为 0 (d_k=0)
-    const_u = 0;                % 全为 0 (d_k=0)
+    g_u = zeros(n_var, 1);      % 全为 0 (无常数偏移)
+    const_u = 0;                % 全为 0 (无常数偏移)
 
     for k = 1:K
         % 差分矩阵 D_k (2.9): 3×3(K+1)
         D_k = zeros(3, n_var);
-        if k == 1
-            D_k(:, 0*3+1 : 1*3) = -eye(3);   % v_0 块 = -I
-            D_k(:, 1*3+1 : 2*3) =  eye(3);   % v_1 块 =  I
-        else
-            D_k(:, (k-1)*3+1 : k*3)       =  eye(3);   % 第 k 块 = I
-            D_k(:, (k-2)*3+1 : (k-1)*3)   = -eye(3);   % 第 k-1 块 = -I
-        end
-        d_k = zeros(3,1);   % 无常数项 (v_0 在 v 中)
+        D_k(:, k*3+1 : (k+1)*3) =  eye(3);   % v_k     块 = +I
+        D_k(:, (k-1)*3+1 : k*3) = -eye(3);   % v_{k-1} 块 = -I
 
-        % 只有二次项 (d_k=0)
-        H_u = H_u + 2 * D_k' * R_mat * D_k;    % (C) 二次
+        % 只有二次项 (u_k 完全由 D_k·v 表达)
+        H_u = H_u + 2 * D_k' * R * D_k;    % (C) 二次
     end
 
     %% =====================================================
     % 3. RSS 强凸正则化 ρ·‖u-û‖² (2.10): H_rho, g_rho, const_rho
-    % δ_k = -û_k (因为 d_k=0)
+    % u_k - û_k = D_k·v - û_k (û_k 是上次迭代解, 已知常数)
     % k=1..K (含 u_K - û_K, 与 V1 一致)
     % =====================================================
     H_rho = zeros(n_var, n_var);
@@ -752,38 +731,30 @@ function qp_problem = construct_complete_qp_from_rss_v2(path, step, current_nu, 
     for k = 1:K
         % D_k 同 2.9
         D_k = zeros(3, n_var);
-        if k == 1
-            D_k(:, 0*3+1 : 1*3) = -eye(3);
-            D_k(:, 1*3+1 : 2*3) =  eye(3);
-        else
-            D_k(:, (k-1)*3+1 : k*3)     =  eye(3);
-            D_k(:, (k-2)*3+1 : (k-1)*3) = -eye(3);
-        end
+        D_k(:, k*3+1 : (k+1)*3) =  eye(3);   % v_k     块 = +I
+        D_k(:, (k-1)*3+1 : k*3) = -eye(3);   % v_{k-1} 块 = -I
 
-        % δ_k = -û_k (d_k=0)
-        delta_k = -u_hat(:, k);
-
-        % 三部分
-        H_rho     = H_rho     + 2 * rho * D_k' * D_k;          % (C) 二次
-        g_rho     = g_rho     + 2 * rho * D_k' * delta_k;       % (B) 一次
-        const_rho = const_rho +       rho * delta_k' * delta_k; % (A) 常数
+        % 三部分 (u_k - û_k = D_k·v - û_k)
+        H_rho     = H_rho     + 2 * rho * D_k' * D_k;                    % (C) 二次
+        g_rho     = g_rho     - 2 * rho * D_k' * u_hat(:, k);            % (B) 一次
+        const_rho = const_rho +       rho * u_hat(:, k)' * u_hat(:, k);  % (A) 常数
     end
 
     %% =====================================================
     % 4. 合并 H, g, const
     % =====================================================
-    H_mat = H_track + H_u + H_rho;
-    g_vec = g_track + g_u + g_rho;
+    H = H_track + H_u + H_rho;
+    g = g_track + g_u + g_rho;
     objective_constant = const_track + const_u + const_rho;
 
-    H_mat = 0.5 * (H_mat + H_mat');  % 对称化
+    H = 0.5 * (H + H');  % 对称化
 
     %% =====================================================
-    % 5. 等式约束: v_0 = current_nu (3 条, 锁定 v_0)
+    % 5. 等式约束: v_0 = v0 (3 条, 锁定 v_0)
     % =====================================================
     A_eq = zeros(3, n_var);
     A_eq(:, 1:3) = eye(3);          % v_0 块 = I
-    b_eq = current_nu;
+    b_eq = v0;
     n_eq = 3;
 
     %% =====================================================
@@ -815,8 +786,8 @@ function qp_problem = construct_complete_qp_from_rss_v2(path, step, current_nu, 
     %% =====================================================
     % 7. 返回 (字段对齐 HPIPM API)
     % =====================================================
-    qp_problem.H = H_mat;
-    qp_problem.g = g_vec;
+    qp_problem.H = H;
+    qp_problem.g = g;
     qp_problem.A = A_eq;
     qp_problem.b = b_eq;
     qp_problem.C = [];
@@ -834,13 +805,13 @@ function qp_problem = construct_complete_qp_from_rss_v2(path, step, current_nu, 
 end
 ```
 
-### 8.1 V1 vs V2 关键差异
+### 7.1 V1 vs V2 关键差异
 
 | 项 | V1 | V2 |
 |---|---|---|
-| 决策变量 | x = [u(18); nu(18)] = 36 维 | v = [v_0; v_1..v_K] = 21 维 |
-| 等式约束 | 18 条 (动力学递推) | 3 条 (仅 v_0 = current_nu) |
-| H 填充方式 | 逐 k 双重循环填交叉项 | 矩阵乘法 `(B·I_k)'·Q·(B·I_k)` |
-| u'Ru 的 H | u 块纯对角 | v 块三对角 (差分消元), g_u=0, const_u=0 |
-| 转向锥约束 | 直接用 u | TODO: 需重写为 v 差分 |
+| 决策变量 | $\boldsymbol{x} = [\mathbf{u}(18); \nu(18)] = 36$ 维 | $\boldsymbol{v} = [v_0; v_1..v_K] = 21$ 维 |
+| 等式约束 | 18 条 (动力学递推) | 3 条 (仅 $v_0 = v_0^{\text{cur}}$) |
+| $\mathbf{H}$ 填充方式 | 逐 $k$ 双重循环填交叉项 | 矩阵乘法 $(\mathbf{B}\,\mathbf{I}_k)^\top \mathbf{Q} (\mathbf{B}\,\mathbf{I}_k)$ |
+| $\mathbf{u}^\top \mathbf{R} \mathbf{u}$ 的 $\mathbf{H}$ | $\mathbf{u}$ 块纯对角 | $\boldsymbol{v}$ 块三对角 (差分消元), $\mathbf{g}_u = \mathbf{0}$, $\text{const}_u = 0$ |
+| 转向锥约束 | 直接用 $\mathbf{u}$ | TODO: 需重写为 $\boldsymbol{v}$ 差分 |
 | 等价性 | — | 与 V1 严格等价 (经约束消元后 H/g/const 完全一致) |

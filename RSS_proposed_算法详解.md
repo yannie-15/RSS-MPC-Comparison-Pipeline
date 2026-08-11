@@ -105,7 +105,7 @@ x = [u(:); nu(:)]  (36维)
 function [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, state_dot, state)
 ```
 
-- 输入：参考轨迹 `path`、当前步 `step`、当前车体系速度 `state_dot`（即 `current_nu`）、当前位姿 `state`
+- 输入：参考轨迹 `path`、当前步 `step`、当前车体系速度 `state_dot`（即 `v0`）、当前位姿 `state`
 - 输出：控制增量序列 `u`、世界系状态导数 `new_state_dot`、车体系速度 `velocity`、诊断 `diagnostics`
 
 ### 3.2 SQP 外层循环（对应论文 Algorithm 1）
@@ -131,7 +131,7 @@ u_hat = zeros(3, K);  % static init: u^(0) = 0
 
 for m = 1 : max_iter
     % 1. 构造凸子问题 Q_K(u^(m))
-    qp = construct_complete_qp_from_rss(path, step, current_nu, state, u_hat, params);
+    qp = construct_complete_qp_from_rss(path, step, v0, state, u_hat, params);
 
     % 2. 数据格式转换: cell -> 3D numpy
     Hq_3d = zeros(n_var, n_var, n_qcqp);
@@ -164,7 +164,7 @@ end
 new_state_dot = [R(psi), 0; 0, 1] * (state_dot + k1 * u(:,1))
 ```
 其中：
-- `state_dot` = 输入的当前车体系速度（即 `current_nu`）
+- `state_dot` = 输入的当前车体系速度（即 `v0`）
 - `state_dot + k1*u(:,1)` = 输出车体系速度 `velocity`（论文 Alg.1 line 11）
 - `R(psi)` = 2D 旋转矩阵（由 `state(3)` 构造）
 - `new_state_dot` = 输出的世界系状态导数
@@ -175,7 +175,7 @@ new_state_dot = [R(psi), 0; 0, 1] * (state_dot + k1 * u(:,1))
 new_state_dot = [cos(psi), -sin(psi), 0;
                  sin(psi),  cos(psi), 0;
                     0,        0,    1] * (state_dot + 1.00 * u(:, 1));
-velocity = current_nu + u(:, 1);
+velocity = v0 + u(:, 1);
 ```
 
 注意 `k1=1`（硬编码）。`state_dot + 1*u(:,1)` 即车体系速度 `velocity`，再经旋转矩阵 `R(psi)` 旋到世界系得到 `new_state_dot`。
@@ -205,10 +205,10 @@ end
 ### 4.1 接口与总览
 
 ```matlab
-function qp_problem = construct_complete_qp_from_rss(path, step, current_nu, state, u_hat, params)
+function qp_problem = construct_complete_qp_from_rss(path, step, v0, state, u_hat, params)
 ```
 
-- 输入：参考轨迹、当前步、当前车体速度 `current_nu`、当前位姿、上次迭代解 `u_hat`、参数
+- 输入：参考轨迹、当前步、当前车体速度 `v0`、当前位姿、上次迭代解 `u_hat`、参数
 - 输出：`qp_problem` 结构体，含 `H, g, A, b, C(空), d(空), lb(空), ub(空), Hq(cell), gq(cell), uq, n_var, K, n_eq, n_qcqp, objective_constant`
 
 #### 论文公式 → H 填充位置总览
@@ -274,21 +274,21 @@ min  0.5 x' H x + g' x
 | 简化记号 | 位置部分代码 | 姿态部分代码 |
 |---|---|---|
 | `S` | `R_psi0·dt·S_k`（其中 `S_k = Σ_{j=1}^{k-1} nu(1:2,j)`） | `dt·sum(nu(3,1:k-1))` |
-| `c` | `c_k = current_xy - ref_xy + R_psi0·current_nu(1:2)·dt` | `psi_c_k = psi0 - ref_psi + current_nu(3)·dt` |
+| `c` | `c_k = current_xy - ref_xy + R_psi0·v0(1:2)·dt` | `psi_c_k = psi0 - ref_psi + v0(3)·dt` |
 | `w` | `w_pos = 30` | `w_psi = 1` |
 
 **对齐说明**：两边的 `c` 形式统一为 `当前状态 - 参考 + 第0步位移`：
 
 ```
-位置: c_k      = current_xy - ref_xy    + R_psi0·current_nu(1:2)·dt
+位置: c_k      = current_xy - ref_xy    + R_psi0·v0(1:2)·dt
                 └─当前位置(2维)─┘   └─参考(2维)─┘   └──第0步位移(2维)──┘
-姿态: psi_c_k  = psi0       - ref_psi   + current_nu(3)·dt
+姿态: psi_c_k  = psi0       - ref_psi   + v0(3)·dt
                 └─当前姿态(1维)─┘  └─参考(1维)─┘  └─第0步位移(1维)┘
 ```
 
 - 第1项：当前状态（位置 `current_xy` / 姿态 `psi0`）
 - 第2项：参考轨迹（`ref_xy` / `ref_psi`）
-- 第3项：第 0 步位移（l=0 的速度积分，用已知量 `current_nu`）
+- 第3项：第 0 步位移（l=0 的速度积分，用已知量 `v0`）
   - 位置部分需 `R_psi0` 旋转（车体系→世界系）
   - 姿态部分是标量，无需旋转
 
@@ -320,7 +320,7 @@ w_pos·‖c_k + R_psi0·dt·S_k‖^2
 
 位置部分（[L153-179](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L153-L179)）：
 ```matlab
-c_k = current_xy - ref_xy + R_psi0 * current_nu(1:2) * dt;  % ← 这就是 c
+c_k = current_xy - ref_xy + R_psi0 * v0(1:2) * dt;  % ← 这就是 c
 grad_dir = R_psi0' * c_k;                                    % c 经 R' 转换
 % ...
 H_mat(...) += 2*w_pos*dt^2;        % 二次项 (S)
@@ -331,7 +331,7 @@ objective_constant += w_pos*(c_k'*c_k);  % 常数项 (c) [L262]
 
 姿态部分（[L199-216](algorithms/RSS_proposed/construct_complete_qp_from_rss.m#L199-L216)）：
 ```matlab
-psi_c_k = psi0 + current_nu(3)*dt - ref_psi;  % ← 这就是 c
+psi_c_k = psi0 + v0(3)*dt - ref_psi;  % ← 这就是 c
 % ...
 H_mat(...) += 2*w_psi*dt^2;        % 二次项 (S)
 g_vec(...) += 2*w_psi*dt*psi_c_k;  % 一次项 (c)
@@ -374,10 +374,10 @@ objective_constant += w_psi*psi_c_k^2;  % 常数项 (c) [L270]
 
 跟踪误差的一阶展开（略去 O(dt^2)）：
 ```
-position_error_k = current_xy - ref_xy_k + R(psi0)*(current_nu(1:2)*dt + sum_{j=1}^{k-1} nu(1:2,j)*dt)
+position_error_k = current_xy - ref_xy_k + R(psi0)*(v0(1:2)*dt + sum_{j=1}^{k-1} nu(1:2,j)*dt)
                  = c_k + R_psi0*dt*S_k
 ```
-其中 `c_k = current_xy - ref_xy + R_psi0*current_nu(1:2)*dt`（常数），`S_k = sum_{j=1}^{k-1} nu(1:2,j)`（决策变量）。
+其中 `c_k = current_xy - ref_xy + R_psi0*v0(1:2)*dt`（常数），`S_k = sum_{j=1}^{k-1} nu(1:2,j)`（决策变量）。
 
 代价 `w_pos*||c_k + R_psi0*dt*S_k||^2` 展开（利用 `R_psi0'*R_psi0 = I`）：
 ```
@@ -389,7 +389,7 @@ position_error_k = current_xy - ref_xy_k + R(psi0)*(current_nu(1:2)*dt + sum_{j=
 ```matlab
 for k = 2:K
     ref_xy = path(1:2, min(size(path,2), step+k));
-    c_k = current_xy - ref_xy + R_psi0 * current_nu(1:2) * dt;
+    c_k = current_xy - ref_xy + R_psi0 * v0(1:2) * dt;
     grad_dir = R_psi0' * c_k;  % 2×1
 
     % 二次项: H(nu_x(i), nu_x(j)) += 2*w_pos*dt^2 (对 i,j in [1, k-1])
@@ -420,9 +420,9 @@ end
 
 姿态误差：`psi(k) - ref_psi_k`，其中
 ```
-psi(k) = psi0 + current_nu(3)*dt + dt*sum_{j=1}^{k-1} nu(3,j)
+psi(k) = psi0 + v0(3)*dt + dt*sum_{j=1}^{k-1} nu(3,j)
 ```
-常数部分：`psi_c_k = psi0 + current_nu(3)*dt - ref_psi_k`
+常数部分：`psi_c_k = psi0 + v0(3)*dt - ref_psi_k`
 
 代价 `w_psi*(psi_c_k + dt*Σ nu_psi)^2` 展开：
 ```
@@ -434,7 +434,7 @@ psi(k) = psi0 + current_nu(3)*dt + dt*sum_{j=1}^{k-1} nu(3,j)
 ```matlab
 for k = 1:K
     ref_psi = path(3, min(size(path,2), step+k));
-    psi_c_k = psi0 + current_nu(3)*dt - ref_psi;
+    psi_c_k = psi0 + v0(3)*dt - ref_psi;
 
     % 二次项: H(nu_psi(i), nu_psi(j)) += 2*w_psi*dt^2
     for i = 1:k-1
@@ -585,13 +585,13 @@ u in {u : nu(:,k+1) = nu(:,k) + u(:,k+1)}
 #### 4.4.1 初始条件（3 条）
 
 ```matlab
-% nu(:,1) - u(:,1) = current_nu  即 nu(:,1) = current_nu + u(:,1)
+% nu(:,1) - u(:,1) = v0  即 nu(:,1) = v0 + u(:,1)
 for i = 1:3
     u_idx = i;                       % u(i,1)
     nu_idx = nu_start + i - 1;       % nu(i,1)
     A_eq(eq_row, u_idx)  = -1;
     A_eq(eq_row, nu_idx) = 1;
-    b_eq(eq_row) = current_nu(i);
+    b_eq(eq_row) = v0(i);
     eq_row = eq_row + 1;
 end
 ```
@@ -685,7 +685,7 @@ R2 = [sin(delta_theta),  cos(delta_theta); -cos(delta_theta), sin(delta_theta)];
 构造 `nu_hat`（u_hat 对应的 nu_hat 序列，用于凸化的 B 项）：
 ```matlab
 nu_hat = zeros(3, K);
-nu_hat(:, 1) = current_nu + u_hat(:, 1);
+nu_hat(:, 1) = v0 + u_hat(:, 1);
 for k = 1:K-1
     nu_hat(:, k+1) = nu_hat(:, k) + u_hat(:, k+1);
 end
@@ -744,20 +744,20 @@ u_hat_const = u_hat_const + 2 * lv' * R * Hn * u_hat(:, k);
 uq_val = lv' * lv - u_hat_const;  % ||b||^2 - L 中的 u_hat 常数部分
 ```
 
-##### k = 1 情况（nu(:,0) = current_nu 是已知常数）
+##### k = 1 情况（nu(:,0) = v0 是已知常数）
 
 ```matlab
-% b = (I+R)*H_n*current_nu + R*H_n*u_hat(:,1)
-lv = (eye(2) + R) * Hn * current_nu + R * Hn * u_hat(:, 1);
+% b = (I+R)*H_n*v0 + R*H_n*u_hat(:,1)
+lv = (eye(2) + R) * Hn * v0 + R * Hn * u_hat(:, 1);
 
-% A 项: 只有 u(:,1)'*M_n*u(:,1) 是决策变量部分 (current_nu 常数移到 uq)
+% A 项: 只有 u(:,1)'*M_n*u(:,1) 是决策变量部分 (v0 常数移到 uq)
 Hq_k(1:3, 1:3) = 2 * Mn;
 
-% 线性项: 2*current_nu'*M_n*u(:,1) (来自 A) - 2*b'*R*H_n*u(:,1) (来自 -L)
-gq_k(1:3) = 2 * Mn' * current_nu - 2 * Hn' * R' * lv;
+% 线性项: 2*v0'*M_n*u(:,1) (来自 A) - 2*b'*R*H_n*u(:,1) (来自 -L)
+gq_k(1:3) = 2 * Mn' * v0 - 2 * Hn' * R' * lv;
 
-% 常数项: -2*current_nu'*M_n*current_nu (A 常数) + ||b||^2 (B) - 2*b'*R*H_n*u_hat(:,1) (L 中 u_hat 常数)
-uq_val = -2 * current_nu' * Mn * current_nu + lv' * lv - 2 * lv' * R * Hn * u_hat(:, 1);
+% 常数项: -2*v0'*M_n*v0 (A 常数) + ||b||^2 (B) - 2*b'*R*H_n*u_hat(:,1) (L 中 u_hat 常数)
+uq_val = -2 * v0' * Mn * v0 + lv' * lv - 2 * lv' * R * Hn * u_hat(:, 1);
 ```
 
 最后 Hq_k 对称化：
@@ -946,7 +946,7 @@ control_RSS.m
   │
   └─ for m = 1:max_iter (3次)
        │
-       ├─ qp = construct_complete_qp_from_rss(path, step, current_nu, state, u_hat, params)
+       ├─ qp = construct_complete_qp_from_rss(path, step, v0, state, u_hat, params)
        │     │
        │     ├─ 1. 构造 H, g (代价: 位置 + 姿态 + 控制正则 + RSS 强凸)
        │     ├─ 2. 构造 A, b (等式: 初始 3 + 递推 15 = 18)

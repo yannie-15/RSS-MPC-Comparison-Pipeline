@@ -102,9 +102,16 @@ function summary = run_paper_baseline_case(config, scenario)
                         sys_mod = py.importlib.import_module('sys');
                         py.getattr(sys_mod, 'path').append(rss_proposed_dir);
                     end
-                    % 强制重新加载 Python 模块 (清除 MATLAB Engine 的 Python 模块缓存)
-                    solver_mod = py.importlib.import_module('hpipm_qp_solver');
-                    py.importlib.reload(solver_mod);
+                    % 强制重新加载 Python 模块 (用 sys.modules.pop + import, 比 reload 可靠)
+                    % reload 不会重新解析文件路径, 必须先 pop 再 import
+                    reload_py = fullfile(rss_proposed_dir, '_reload_solver_tmp.py');
+                    fid = fopen(reload_py, 'w');
+                    fprintf(fid, 'import sys\n');
+                    fprintf(fid, 'sys.modules.pop("hpipm_qp_solver", None)\n');
+                    fprintf(fid, 'import hpipm_qp_solver\n');
+                    fclose(fid);
+                    py.runpy.run_path(reload_py);
+                    delete(reload_py);
                     fprintf('[proposed-3iter] Python HPIPM 求解器模块已重新加载\n');
                 catch err
                     fprintf('[proposed-3iter] 警告: Python 模块 reload 失败: %s\n', err.message);
@@ -174,9 +181,11 @@ function summary = run_paper_baseline_case(config, scenario)
             % 而是使用 submodule 返回的 solve_time, 更准确)
             switch algorithm
                 case 'proposed-3iter'
-                    % RSS_proposed 0121: [u, new_state_dot, velocity] = control_RSS(path, step, state_dot, state)
-                    % 0121 版 cvx_solver ECOS 已在 cvx_begin 之后, 无需外部 CVX status 重置
-                    clear K H R xInit solver_time_array
+                    % RSS_proposed: [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, state_dot, state)
+                    % Warm start 通过全局 RSS_WARMSTART_UHAT 传递 (保持 4 参数签名, 防 MATLAB 参数缓存错误)
+                    global RSS_WARMSTART_UHAT;
+                    if k == 1; RSS_WARMSTART_UHAT = []; end
+                    clear K H R xInit control_RSS
                     % 首步诊断: 确认 MATLAB 实际加载的 control_RSS.m 版本
                     if k == 1
                         crss_path = which('control_RSS');
@@ -200,11 +209,18 @@ function summary = run_paper_baseline_case(config, scenario)
                         catch
                         end
                     end
-                    [u_full, worldVelocity, bodyVelocity] = ...
+                    [u_full, worldVelocity, bodyVelocity, diagnostics] = ...
                         control_RSS(path, k, lastBodyVelocity, state');
                     u = u_full(:, 1);
-                    solve_time = NaN;  % submodule 不输出 solve_time (用 diary 捕获, 此处不解析)
-                    iter_num = NaN;    % submodule 不输出 iter_num
+                    solve_time = diagnostics.total_solve_time;  % SCP 迭代总耗时
+                    iter_num = diagnostics.max_iter;            % SCP 实际迭代数 (自适应收敛后可能 < 10)
+
+                    % ========== Warm start: 通过全局 RSS_WARMSTART_UHAT 保存 u_full 供下一步 ==========
+                    if ~any(isnan(u_full(:)))
+                        RSS_WARMSTART_UHAT = u_full(:);
+                    else
+                        RSS_WARMSTART_UHAT = [];  % 失败则冷启动 (1e-4)
+                    end
 
                 case 'e-lmpc'
                     % RSS_sqp: [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state)
