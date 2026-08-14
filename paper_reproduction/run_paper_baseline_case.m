@@ -87,7 +87,7 @@ function summary = run_paper_baseline_case(config, scenario)
     alg_params.algorithm = algorithm;
     config = alg_params;
 
-    % 恢复 solver 模式 ('ocpqp' 默认 / 'denseqcqp' 精确二次约束)
+    % 恢复 solver 模式 ('ocpqcqp' 默认 / 'denseqcqp' Golden oracle)
     if ~isempty(user_solver)
         config.solver = user_solver;
     end
@@ -198,11 +198,10 @@ function summary = run_paper_baseline_case(config, scenario)
             % 而是使用 submodule 返回的 solve_time, 更准确)
             switch algorithm
                 case 'proposed-3iter'
-                    % RSS_proposed: [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, state_dot, state)
-                    % 求解器通过 cfg.solver 切换 (三模式 switch-case):
-                    %   'ocpqp'    (默认) → control_RSS           (HPIPM OCP QP + 线性化约束, legacy)
-                    %   'ocpqcqp'         → control_RSS_ocpqcqp   (HPIPM OCP QCQP, 精确二次约束)
-                    %   'denseqcqp'       → control_RSS_denseqcqp (HPIPM Dense QCQP, Golden oracle)
+                    % RSS_proposed: [u, new_state_dot, velocity, diagnostics] = control_RSS_ocpqcqp(path, step, state_dot, state)
+                    % 求解器通过 cfg.solver 切换:
+                    %   'ocpqcqp'   (默认) → control_RSS_ocpqcqp   (HPIPM OCP QCQP, 精确二次约束)
+                    %   'denseqcqp'        → control_RSS_denseqcqp (HPIPM Dense QCQP, Golden oracle)
                     global RSS_WARMSTART_UHAT RSS_SOLVER_MODE;
                     if k == 1
                         RSS_WARMSTART_UHAT = [];
@@ -211,24 +210,19 @@ function summary = run_paper_baseline_case(config, scenario)
                         end
                         solver_mode = lower(config.solver);
                         switch solver_mode
-                            case 'ocpqp'
-                                fprintf('[proposed-3iter] 求解器: control_RSS (OCP QP, 线性化约束, legacy)\n');
                             case 'ocpqcqp'
                                 fprintf('[proposed-3iter] 求解器: control_RSS_ocpqcqp (OCP QCQP, 精确二次约束)\n');
                             case 'denseqcqp'
                                 fprintf('[proposed-3iter] 求解器: control_RSS_denseqcqp (Dense QCQP, Golden oracle)\n');
                             otherwise
-                                warning('未知 solver mode: %s, 使用默认 ocpqp', config.solver);
-                                solver_mode = 'ocpqp';
+                                warning('未知 solver mode: %s, 使用默认 ocpqcqp', config.solver);
+                                solver_mode = 'ocpqcqp';
                         end
                         RSS_SOLVER_MODE = solver_mode;
                     end
                     solver_mode = RSS_SOLVER_MODE;
-                    clear K H R xInit control_RSS control_RSS_denseqcqp control_RSS_ocpqcqp
+                    clear K H R xInit control_RSS_denseqcqp control_RSS_ocpqcqp
                     switch solver_mode
-                        case 'ocpqp'
-                            [u_full, worldVelocity, bodyVelocity, diagnostics] = ...
-                                control_RSS(path, k, lastBodyVelocity, state');
                         case 'ocpqcqp'
                             [u_full, worldVelocity, bodyVelocity, diagnostics] = ...
                                 control_RSS_ocpqcqp(path, k, lastBodyVelocity, state');
