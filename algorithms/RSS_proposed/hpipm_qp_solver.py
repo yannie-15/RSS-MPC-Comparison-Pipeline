@@ -180,23 +180,18 @@ def solve_qcqp(H, g, A, b, Hq, gq, uq, verbose=False):
 
     qcqp_sol = hpipm_dense_qcqp_sol(dim)
 
+    # 容差 1e-6 (与 v2 一致, 1e-10 会使 IPM 迭代数翻倍且易触发 robust 重试)
     arg = hpipm_dense_qcqp_solver_arg(dim, 'balance')
-    arg.set('iter_max', 1000)
-    arg.set('tol_stat', 1e-10)
-    arg.set('tol_eq', 1e-10)
-    arg.set('tol_ineq', 1e-10)
-    arg.set('tol_comp', 1e-10)
+    arg.set('iter_max', 300)
+    arg.set('tol_stat', 1e-6)
+    arg.set('tol_eq', 1e-6)
+    arg.set('tol_ineq', 1e-6)
+    arg.set('tol_comp', 1e-6)
 
     solver = hpipm_dense_qcqp_solver(dim, arg)
     t0 = time.perf_counter()
     solver.solve(qcqp, qcqp_sol)
     solve_time = time.perf_counter() - t0
-    try:
-        st = float(arg.get('solve_time'))
-        if st > 0:
-            solve_time = st
-    except Exception:
-        pass
 
     x = qcqp_sol.get('v').flatten()
     status = int(solver.get('status'))
@@ -207,21 +202,15 @@ def solve_qcqp(H, g, A, b, Hq, gq, uq, verbose=False):
         if verbose:
             print(f"[hpipm] balance 失败 (status={status}), 重试 robust...", file=sys.stderr)
         arg2 = hpipm_dense_qcqp_solver_arg(dim, 'robust')
-        arg2.set('iter_max', 2000)
-        arg2.set('tol_stat', 1e-10)
-        arg2.set('tol_eq', 1e-10)
-        arg2.set('tol_ineq', 1e-10)
-        arg2.set('tol_comp', 1e-10)
+        arg2.set('iter_max', 500)
+        arg2.set('tol_stat', 1e-6)
+        arg2.set('tol_eq', 1e-6)
+        arg2.set('tol_ineq', 1e-6)
+        arg2.set('tol_comp', 1e-6)
         solver2 = hpipm_dense_qcqp_solver(dim, arg2)
         t1 = time.perf_counter()
         solver2.solve(qcqp, qcqp_sol)
         solve_time += time.perf_counter() - t1
-        try:
-            st2 = float(arg2.get('solve_time'))
-            if st2 > 0:
-                solve_time = solve_time - (time.perf_counter() - t1) + st2
-        except Exception:
-            pass
         x = qcqp_sol.get('v').flatten()
         status = int(solver2.get('status'))
         obj_value = float(0.5 * x @ H @ x + g @ x)
@@ -587,11 +576,11 @@ def solve_ocp_qcqp(A, B, b_stack, Q_stack, S_stack, R_stack, q_stack, r_stack,
     # speed=1, balance=2, robust=3
     _ocp_qcqp_mode = os.environ.get('HPIPM_OCP_QCQP_MODE', 'speed')
     arg = hpipm_ocp_qcqp_solver_arg(dim, _ocp_qcqp_mode)
-    arg.set('iter_max', 1000)
-    arg.set('tol_stat', 1e-10)
-    arg.set('tol_eq', 1e-10)
-    arg.set('tol_ineq', 1e-10)
-    arg.set('tol_comp', 1e-10)
+    arg.set('iter_max', 300)
+    arg.set('tol_stat', 1e-8)
+    arg.set('tol_eq', 1e-8)
+    arg.set('tol_ineq', 1e-8)
+    arg.set('tol_comp', 1e-8)
     arg.set('mu0', 10.0)
 
     # warm_start=2: 选中"全量裁剪初始化"分支, 绕过 DLL C 层 bug
@@ -611,12 +600,6 @@ def solve_ocp_qcqp(A, B, b_stack, Q_stack, S_stack, R_stack, q_stack, r_stack,
     t0 = time.perf_counter()
     solver.solve(qp, qp_sol)
     solve_time = time.perf_counter() - t0
-    try:
-        st = float(arg.get('solve_time'))
-        if st > 0:
-            solve_time = st
-    except Exception:
-        pass
 
     status = int(solver.get('status'))
     iters = int(solver.get('iter'))
