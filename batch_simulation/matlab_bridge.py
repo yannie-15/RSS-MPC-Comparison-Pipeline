@@ -1,10 +1,12 @@
-"""MATLAB Engine bridge for RSS-MPC pipeline.
+"""MATLAB CLI bridge for RSS-MPC pipeline.
 
-Starts a single MATLAB Engine instance, adds the repository to the MATLAB path,
-and calls run_one_case once per case (not per MPC step).
+通过 `matlab -batch` 调用 MATLAB 脚本 (main.m / run_one_case), 替代
+MATLAB Engine for Python。MATLAB Engine 在部分 Windows 环境下启动卡死,
+而 `matlab -batch` 方式更稳定且兼容性更好。
 """
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -15,7 +17,7 @@ from .result_io import parse_summary, print_summary
 
 
 class MatlabBridge:
-    """Manages a single MATLAB Engine session for running RSS cases.
+    """通过 `matlab -batch` 调用 MATLAB 脚本。
 
     Usage:
         bridge = MatlabBridge(repo_root)
@@ -30,81 +32,94 @@ class MatlabBridge:
 
     def __init__(self, repo_root: str | Path):
         self.repo_root = Path(repo_root).resolve()
-        self.engine: Any = None
+        self.matlab_exe: str | None = None
         self._started = False
 
     def start(self) -> None:
-        """Start the MATLAB Engine and add repo to path.
+        """检测 matlab 可执行文件是否在 PATH 中。
 
         Raises:
-            ImportError: If matlab.engine is not installed.
-            RuntimeError: If the engine fails to start.
+            RuntimeError: 如果找不到 matlab 命令。
         """
-        try:
-            import matlab.engine
-        except ImportError as e:
-            raise ImportError(
-                "matlab.engine not found. Install MATLAB Engine for Python:\n"
-                f"  cd <matlabroot>/extern/engines/python\n"
-                f"  python setup.py install\n"
-                f"Original error: {e}"
-            ) from e
-
-        print("[matlab_bridge] Starting MATLAB Engine...")
-        self.engine = matlab.engine.start_matlab()
-
-        # Windows 下 MATLAB 默认用系统 ANSI 编码 (GBK/cp936) 输出中文,
-        # 传给 Python 时按 UTF-8 解码会乱码; 强制设为 UTF-8
-        if sys.platform.startswith('win'):
-            try:
-                self.engine.feature('DefaultCharacterSet', 'UTF-8', nargout=0)
-            except Exception:
-                pass
-
-        # Add repo root to MATLAB path (highest priority)
-        # genpath adds root first, then subdirs, so root files take precedence
-        self.engine.addpath(
-            str(self.repo_root),
-            nargout=0,
-        )
-        # 设置 MATLAB 工作目录为 batch_simulation/ (main.m 所在目录)
-        batch_dir = str(self.repo_root / "batch_simulation")
-        if Path(batch_dir).exists():
-            self.engine.cd(batch_dir, nargout=0)
-            self.engine.addpath(batch_dir, nargout=0)
-        # 添加 core/ (共享工具) 和 algorithms/ (算法包)
-        core_dir = str(self.repo_root / "core")
-        if Path(core_dir).exists():
-            self.engine.addpath(core_dir, nargout=0)
-        alg_dir = str(self.repo_root / "algorithms")
-        if Path(alg_dir).exists():
-            self.engine.addpath(alg_dir, nargout=0)
+        self.matlab_exe = shutil.which("matlab")
+        if not self.matlab_exe:
+            raise RuntimeError(
+                "matlab 命令未找到。请确保 MATLAB 已安装且其 bin 目录在 PATH 中。\n"
+                "Windows: 通常为 C:\\Program Files\\MATLAB\\R20XXx\\bin"
+            )
 
         self._started = True
-        print("[matlab_bridge] MATLAB Engine ready.")
+        print("[matlab_bridge] MATLAB CLI ready.")
 
-    def run_one_case(self, config_path: str | Path) -> dict[str, Any]:
-        """Run a single case via MATLAB run_one_case.
+    def _build_matlab_cmd(self, body: str) -> str:
+        """构造 MATLAB -batch 命令字符串。
 
         Args:
-            config_path: Path to the JSON config file.
+            body: MATLAB 代码主体 (不含 exit, 由本函数添加)。
 
         Returns:
-            Parsed summary dict.
+            完整的 MATLAB 命令字符串。
+        """
+        # 将仓库根目录和 batch_simulation/ 加入 path, 确保 main.m 等可被找到
+        repo_str = str(self.repo_root).replace("\\", "/")
+        batch_str = str(self.repo_root / "batch_simulation").replace("\\", "/")
+        return (
+            f"addpath('{repo_str}', '{batch_str}'); "
+            f"{body}; exit"
+        )
+
+    def run_one_case(self, config_path: str | Path) -> dict[str, Any]:
+        """通过 matlab -batch 运行单个 case。
+
+        Args:
+            config_path: JSON 配置文件路径。
+
+        Returns:
+            解析后的 summary 字典。
 
         Raises:
-            RuntimeError: If the engine is not started.
-            json.JSONDecodeError: If MATLAB returns invalid JSON.
+            RuntimeError: 如果 bridge 未启动。
+            FileNotFoundError: 配置文件不存在。
         """
-        if not self._started or self.engine is None:
-            raise RuntimeError("MATLAB Engine not started. Call bridge.start() first.")
+        if not self._started or self.matlab_exe is None:
+            raise RuntimeError("MATLAB bridge not started. Call bridge.start() first.")
 
         config_path = Path(config_path).resolve()
         if not config_path.exists():
             raise FileNotFoundError(f"Config file not found: {config_path}")
 
         print(f"[matlab_bridge] Running case: {config_path}")
-        raw = self.engine.run_one_case(str(config_path), nargout=1)
+
+        # run_one_case 返回 summary 结构体, 通过 JSON 文件传递结果
+        result_json = config_path.parent / f"_result_{config_path.stem}.json"
+        if result_json.exists():
+            result_json.unlink()
+
+        config_str = str(config_path).replace("\\", "/")
+        result_str = str(result_json).replace("\\", "/")
+        batch_str = str(self.repo_root / "batch_simulation").replace("\\", "/")
+        body = (
+            f"addpath('{batch_str}'); "
+            f"summary = run_one_case('{config_str}'); "
+            f"fid = fopen('{result_str}', 'w'); fwrite(fid, jsonencode(summary)); fclose(fid)"
+        )
+        matlab_cmd = self._build_matlab_cmd(body)
+
+        result = subprocess.run(
+            [self.matlab_exe, "-batch", matlab_cmd],
+            cwd=str(self.repo_root),
+        )
+
+        if result.returncode != 0:
+            raise RuntimeError(f"MATLAB run_one_case 失败 (exit code: {result.returncode})")
+
+        if not result_json.exists():
+            raise RuntimeError("MATLAB 未生成结果 JSON 文件")
+
+        with open(result_json, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        result_json.unlink()
+
         summary = parse_summary(raw)
         print_summary(summary)
         return summary
@@ -124,54 +139,46 @@ class MatlabBridge:
             True 如果 MATLAB main.m 正常执行完成, False 如果抛出异常。
 
         Raises:
-            RuntimeError: 如果 MATLAB Engine 未启动。
+            RuntimeError: 如果 bridge 未启动。
         """
-        if not self._started or self.engine is None:
-            raise RuntimeError("MATLAB Engine not started. Call bridge.start() first.")
+        if not self._started or self.matlab_exe is None:
+            raise RuntimeError("MATLAB bridge not started. Call bridge.start() first.")
 
-        import matlab
+        # 构造 MATLAB 参数
+        seeds_matlab = "[" + ",".join(str(s) for s in seeds) + "]"
+        alg_matlab = "{" + ",".join(f"'{a}'" for a in algorithms) + "}"
+        force_regen_matlab = "true" if force_regen else "false"
 
-        # Python list[int] → matlab.double (对应 MATLAB 1×N double 数组)
-        seeds_matlab = matlab.double(seeds)
-        # Python list[str] → MATLAB 1×N cell array of char (main.m 的 parse_args 兼容此格式)
-        algorithms_matlab = algorithms
+        body = (
+            f"main('seeds', {seeds_matlab}, "
+            f"'algorithms', {alg_matlab}, "
+            f"'forceRegen', {force_regen_matlab})"
+        )
+        matlab_cmd = self._build_matlab_cmd(body)
 
-        print(f"[matlab_bridge] 调用 main.m: seeds={seeds[0]}:{seeds[-1]} "
+        print(f"[matlab_bridge] 调用 matlab -batch: seeds={seeds[0]}:{seeds[-1]} "
               f"(共 {len(seeds)} 个), algorithms={algorithms}, forceRegen={force_regen}")
 
         try:
-            # main.m 返回 comparison 结构体; 这里不取返回值 (Step 6/7 内部已完成画图/打印)
-            # nargout=0 让 MATLAB 不强制要求接收返回值
-            self.engine.main(
-                'seeds', seeds_matlab,
-                'algorithms', algorithms_matlab,
-                'forceRegen', bool(force_regen),
-                nargout=0,
+            # matlab -batch 直接输出到终端 stdout/stderr, 实时可见
+            result = subprocess.run(
+                [self.matlab_exe, "-batch", matlab_cmd],
+                cwd=str(self.repo_root),
             )
-            print("[matlab_bridge] main.m 执行完成。")
-            return True
+            if result.returncode == 0:
+                print("[matlab_bridge] main.m 执行完成。")
+                return True
+            else:
+                print(f"[matlab_bridge] main.m 执行失败 (exit code: {result.returncode})")
+                return False
         except Exception as e:
-            err_msg = str(e)
-            # MATLAB Engine 在 Windows 上可能仍用 GBK 编码错误信息 (即便已设置
-            # DefaultCharacterSet), 尝试 latin-1 → gbk 重新解码还原中文
-            if sys.platform.startswith('win'):
-                try:
-                    err_msg = err_msg.encode('latin-1').decode('gbk')
-                except (UnicodeDecodeError, UnicodeEncodeError):
-                    pass
-            print(f"[matlab_bridge] main.m 执行失败: {err_msg}")
+            print(f"[matlab_bridge] main.m 执行异常: {e}")
             return False
 
     def close(self) -> None:
-        """Shut down the MATLAB Engine."""
-        if self.engine is not None:
-            try:
-                self.engine.quit()
-            except Exception:
-                pass
-            self.engine = None
-            self._started = False
-            print("[matlab_bridge] MATLAB Engine closed.")
+        """清理资源 (subprocess 方式无需清理)。"""
+        self._started = False
+        print("[matlab_bridge] MATLAB bridge closed.")
 
     def __enter__(self):
         self.start()
@@ -183,16 +190,12 @@ class MatlabBridge:
 
 
 def check_matlab_engine() -> bool:
-    """Check if matlab.engine is available.
+    """检测 MATLAB 是否可用 (matlab CLI 在 PATH 中)。
 
     Returns:
-        True if matlab.engine can be imported.
+        True 如果 matlab 命令可用。
     """
-    try:
-        import matlab.engine  # noqa: F401
-        return True
-    except ImportError:
-        return False
+    return shutil.which("matlab") is not None
 
 
 def check_matlab_install() -> dict[str, str]:

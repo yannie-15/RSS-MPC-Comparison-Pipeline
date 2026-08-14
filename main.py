@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """RSS-MPC 批量仿真 Python 入口 (对齐 main.m)
 
-通过 MATLAB Engine 调用 main.m, 实现 Step 0-7 全流程:
+通过 `matlab -batch` 调用 main.m, 实现 Step 0-7 全流程:
   路径设置 → seed 列表 → 算法选择 → 断点续跑 → 批量仿真 → 保存 → 对比图 → Table II
 
 用法:
@@ -13,7 +13,7 @@
 退出码:
     0  成功
     2  仿真失败
-    3  基础设施错误 (MATLAB Engine 未安装等)
+    3  基础设施错误 (MATLAB 未安装等)
 """
 
 import argparse
@@ -125,20 +125,17 @@ def main() -> int:
     print(f"  工作目录: {REPO_ROOT}")
     print("=" * 60)
 
-    # 检查 MATLAB Engine 是否可用
+    # 检查 MATLAB 是否可用
     if not check_matlab_engine():
-        print("ERROR: matlab.engine 未安装。")
-        print("安装 MATLAB Engine for Python:")
-        print(f"  1. 在 MATLAB 中运行 'matlabroot' 获取 MATLAB 根目录")
-        print(f"  2. cd <matlabroot>/extern/engines/python")
-        print(f"  3. {sys.executable} setup.py install")
+        print("ERROR: matlab 命令未找到。请确保 MATLAB 已安装且其 bin 目录在 PATH 中。")
+        print("Windows: 通常为 C:\\Program Files\\MATLAB\\R20XXx\\bin")
         return 3
 
-    # 通过 MATLAB Engine 调用 main.m (Step 0-7 全流程)
+    # 通过 matlab -batch 调用 main.m (Step 0-7 全流程)
     try:
         with MatlabBridge(REPO_ROOT) as bridge:
             success = bridge.run_main(seeds, algorithms, args.force_regen)
-    except ImportError as e:
+    except RuntimeError as e:
         print(f"ERROR: {e}")
         return 3
     except Exception as e:
