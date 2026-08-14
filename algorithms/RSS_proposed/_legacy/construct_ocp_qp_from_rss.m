@@ -1,4 +1,16 @@
-﻿function ocp = construct_ocp_qp_from_rss(path, step, v0, state, u_hat, params)
+function ocp = construct_ocp_qp_from_rss(path, step, v0, state, u_anchor, u_cut, params)
+% 修改: 分离 u_anchor (RSS 凸化锚点 B/L/r/const) 和 u_cut (线性化切点)
+% 模式 B (bounded multi-cut): u_cut 可以是 cell array {3×K, 3×K, ...}, 最多 3 组
+% 向后兼容: 若只传 6 参数, u_cut = u_anchor (退化为旧行为)
+if nargin < 7
+    params = u_cut;
+    u_cut = u_anchor;
+end
+% 统一 u_cut 为 cell array (模式 A: 1 组; 模式 B: 多组)
+if ~iscell(u_cut)
+    u_cut = {u_cut};
+end
+n_cuts = numel(u_cut);  % cut point 数量
 % CONSTRUCT_OCP_QP_FROM_RSS
 % 误差状态 OCP QP 构造 (HPIPM ocp_qp Python 接口, 线性化二次约束)
 %
@@ -13,7 +25,8 @@
 % 注: 由于 HPIPM ocp_qcqp IPM solver 存在 bug (status=3 NAN_SOL),
 %     改用 ocp_qp + 线性化二次约束 (SCP 外层迭代).
 %     二次约束在当前线性化点 (v_hat, u_hat) 处做一阶泰勒展开, 转为一般线性约束.
-%     外层 SCP 迭代 (control_RSS.m 中 m=1..3) 保证收敛到原二次约束的解.
+%     三次 OCP QP 是对原凸二次子问题的有限切平面近似;
+%     可在特定问题上接近 Dense QCQP, 但不保证一般性严格等价.
 
     %% =====================================================
     % 参数提取 (论文 IV-A 实验设置, 与 dense 版一致)
@@ -100,10 +113,10 @@
         b_n = [b_xi; zeros(3,1)];              % 6×1 动力学 bias
         b_list{n+1} = b_n;
 
-        r_n = -2 * rho * u_hat(:, n+1);        % 3×1, 已×2 (off-by-one: u_hat(:,n+1) 是论文编号)
+        r_n = -2 * rho * u_anchor(:, n+1);    % 3×1, 已×2 (RSS 锚点 u_anchor)
         r_list{n+1} = r_n;
 
-        const = const + rho * (u_hat(:,n+1)' * u_hat(:,n+1));  % rho*||u_hat||^2 (不×2)
+        const = const + rho * (u_anchor(:,n+1)' * u_anchor(:,n+1));  % rho*||u_anchor||^2 (不×2)
     end
 
     %% =====================================================
@@ -124,18 +137,30 @@
     % 预计算 û 对应的 v̂ 序列 (转向锥凸化 B 项用, 论文 Appendix A)
     %   v̂_k = v0 + Σ_{j=1}^k û_j  (论文编号; 代码 u_hat(:,j) 即论文 û_j)
     %   nu_hat(:,1) = v̂_0 = v0, nu_hat(:,k+1) = v̂_k
-    nu_hat = zeros(3, K+1);                    % k=0..K (MATLAB 1..K+1)
-    nu_hat(:, 1) = v0;                         % v̂_0 = v0
+    % u_anchor 的 nu_hat 序列 (用于 B, L 项: RSS 凸化锚点)
+    nu_hat_anchor = zeros(3, K+1);             % k=0..K (MATLAB 1..K+1)
+    nu_hat_anchor(:, 1) = v0;                  % v̂_0 = v0
     for k = 1:K
-        nu_hat(:, k+1) = nu_hat(:, k) + u_hat(:, k);
+        nu_hat_anchor(:, k+1) = nu_hat_anchor(:, k) + u_anchor(:, k);
+    end
+    % u_cut 的 nu_hat 序列 (用于线性化切点: A 项切平面)
+    % 模式 B: 对每个 cut point 计算 nu_hat_cut
+    nu_hat_cut_list = cell(1, n_cuts);
+    for c = 1:n_cuts
+        nu_hat_cut_c = zeros(3, K+1);
+        nu_hat_cut_c(:, 1) = v0;
+        for k = 1:K
+            nu_hat_cut_c(:, k+1) = nu_hat_cut_c(:, k) + u_cut{c}(:, k);
+        end
+        nu_hat_cut_list{c} = nu_hat_cut_c;
     end
 
     % 转向锥旋转矩阵 R1, R2 (论文 (12)): R1 = R(pi/2 - delta_theta), R2 = R1^T
     R1 = [sin(delta_theta), -cos(delta_theta); cos(delta_theta),  sin(delta_theta)];
     R2 = [sin(delta_theta),  cos(delta_theta); -cos(delta_theta), sin(delta_theta)];
 
-    % 约束存储 (stage K-1 需要额外 N 条终端轮速约束, 故 ngc_max = 4N)
-    ngc_max = 2*ng_wheels + ng_cone;
+    % 约束存储 (模式 B: 每 stage 约束数 = n_cuts * (2*ng_wheels + ng_cone))
+    ngc_max = n_cuts * (2*ng_wheels + ng_cone);
     Cmat = cell(N_stages, ngc_max);            % 状态系数 (ng×nx)
     Dmat = cell(N_stages, ngc_max);            % 控制系数 (ng×nu)
     lg = cell(N_stages, ngc_max);              % 下界 (ng×1)
@@ -144,14 +169,19 @@
 
     % -------------------------------------------------------
     % 6.1 轮速 SOC 约束 (论文公式 20b): ||H_i * v_k||^2 <= vimax^2
-    %     线性化: ||H v_hat||^2 + 2*v_hat'M*(v - v_hat) <= vimax^2
-    %     注意 ||H v_hat||^2 = v_hat'M v_hat, 所以 RHS = vimax^2
-    %     => (2*M*v_hat)' * v <= vimax^2  (线性, 作用在 x 的 v 分量)
+    %     原约束: v'M v <= vimax^2  (M = H_i' * H_i)
+    %     一阶泰勒线性化在 v_hat 处:
+    %       v_hat'M v_hat + 2*v_hat'M*(v - v_hat) <= vimax^2
+    %     => 2*v_hat'M * v <= vimax^2 + v_hat'M*v_hat
+    %     即 RHS = vimax^2 + A_hat, 其中 A_hat = v_hat'M*v_hat
     %     约束形式: C*x + D*u + lg <= 0 <= ug
-    %       C = [0,0,0, 2*M*v_hat] (1×6), D = zeros(1,3), ug = vimax^2
+    %       C = [0,0,0, 2*M*v_hat] (1×6), D = zeros(1,3), ug = vimax^2 + A_hat
     % -------------------------------------------------------
+    for c = 1:n_cuts
+        nu_hat_cut = nu_hat_cut_list{c};       % 当前 cut point 的 nu_hat 序列
+        u_cut_c = u_cut{c};                    % 当前 cut point 的 u
     for n = 1:K-1                              % 不含终端 stage K
-        v_hat_n = nu_hat(:, n+1);              % v̂_n (MATLAB 1-indexed)
+        v_hat_n = nu_hat_cut(:, n+1);          % v̂_n (切点, from u_cut)
         for i = 1:num_wheels
             Mi = Hn{i}' * Hn{i};               % 3×3
             coeff_v = 2 * Mi * v_hat_n;        % 3×1, grad = 2*M*v_hat
@@ -170,18 +200,24 @@
             ng_per_stage(n+1) = idx;
         end
     end
+    end % for c = 1:n_cuts
 
     % -------------------------------------------------------
     % 6.1b 终端轮速约束移到 stage K-1 (同二次约束版本结构)
     %   原终端约束: ||H_i * v_K||^2 <= vimax^2
     %   v_K = v_{K-1} + u_{K-1} (动力学)
-    %   线性化在 (v_hat_{K-1}, u_hat_{K-1}):
-    %     => 2*M*(v_hat+u_hat)' * (v+u) <= vimax^2
-    %     => C = [0,0,0, 2*M*(v_hat+u_hat)], D = [2*M*(v_hat+u_hat)], ug = vimax^2
+    %   令 w = v + u (终端速度), 原约束: w'M w <= vimax^2
+    %   一阶泰勒线性化在 w_hat = v_hat + u_hat 处:
+    %     2*w_hat'M * w <= vimax^2 + w_hat'M*w_hat
+    %   即 RHS = vimax^2 + A_hat_term, 其中 A_hat_term = w_hat'M*w_hat
+    %     => C = [0,0,0, 2*M*w_hat], D = [2*M*w_hat], ug = vimax^2 + A_hat_term
     % -------------------------------------------------------
+    for c = 1:n_cuts
+        nu_hat_cut = nu_hat_cut_list{c};
+        u_cut_c = u_cut{c};
     n_term = K - 1;                            % HPIPM stage K-1 (MATLAB 索引 K)
-    v_hat_term = nu_hat(:, n_term+1);          % v̂_{K-1}
-    u_hat_term = u_hat(:, n_term+1);           % û_{K-1} (论文编号 K)
+    v_hat_term = nu_hat_cut(:, n_term+1);      % v̂_{K-1} (切点, from u_cut)
+    u_hat_term = u_cut_c(:, n_term+1);         % u_cut_{K-1} (切点)
     w_hat_term = v_hat_term + u_hat_term;      % ŵ = v̂ + û (终端速度线性化点)
     for i = 1:num_wheels
         Mi = Hn{i}' * Hn{i};
@@ -200,40 +236,71 @@
         ug{n_term+1, idx} = ug_ni;
         ng_per_stage(n_term+1) = idx;
     end
+    end % for c = 1:n_cuts
 
     % -------------------------------------------------------
     % 6.2 Steering cone convexified (paper Prop.1 / eq 15-16):
-    %   f(x,u) = x'M(x+u) - 0.5*||Tx+Uu||^2 >= 0
-    %   M = H'*Rg*H (NON-SYMMETRIC!), T=(I+Rg)H, U=Rg*H
-    %   Linearise at (xh,uh): gx=(M+M')x+M'u-T'Tx-T'Uu, gu=M'x-U'Uu-U'Tx
-    %   HPIPM: -gx'x -gu'u <= -(f_hat+gx'xh+gu'uh)
+    %   C(x,u) = A(x,u) - B(u_hat) - L(u,u_hat) <= 0  (凸二次约束)
+    %   A = 0.5*||H*x||^2 + 0.5*||H*(x+u)||^2  (凸, Mn = H*H 对称)
+    %   B = 0.5*||(I+R)*H*xh + R*H*uh||^2      (常数, 在 u_hat 处)
+    %   L = b*(u - uh),  b = grad_u B|_uh = U*(T*xh + U*uh)  (线性)
+    %   T = (I+R)*H, U = R*H
+    %
+    %   线性化 C 在 (xh,uh) 处 (一阶泰勒, 用于 OCP QP 线性约束):
+    %     注意: SCP 中线性化点 (xh,uh) = 上一轮 u_hat, 故 L(uh,uh) = 0
+    %     C(xh,uh) = A(xh,uh) - B_const
+    %     grad_x C = 2*Mn*xh + Mn*uh
+    %     grad_u C = Mn*(xh+uh) - b
+    %     rhs = grad_x_C*xh + grad_u_C*uh - C(xh,uh)
+    %   HPIPM: coeff_v*v + coeff_u*u <= rhs
     % -------------------------------------------------------
+    for c = 1:n_cuts
+        nu_hat_cut = nu_hat_cut_list{c};
+        u_cut_c = u_cut{c};
     for n = 0:K-1
         k = n + 1;
-        xh = nu_hat(:, k);        % x_hat = v_hat_{k-1}
-        uh = u_hat(:, k);         % u_hat_k
+        x_anchor = nu_hat_anchor(:, k);  % 锚点 v̂_{k-1} (from u_anchor, 用于 B/L)
+        u_anchor_k = u_anchor(:, k);     % 锚点 û_k (from u_anchor, 用于 B/L)
+        xh = nu_hat_cut(:, k);           % 切点 v_cut_{k-1} (from u_cut, 用于 A 切平面)
+        uh = u_cut_c(:, k);              % 切点 u_cut_k (from u_cut, 用于 A 切平面)
         for i = 1:num_wheels
             Hi = Hn{i};           % 2x3
+            Mn = Hi' * Hi;        % 3x3 对称 (M_n = H_n*H_n, 与 dense QCQP 一致)
             for gg = 1:2
                 if gg == 1;  Rg = R1;  else;  Rg = R2;  end
 
-                M = Hi' * Rg * Hi;              % 3x3 NON-SYMMETRIC!
                 T = (eye(2) + Rg) * Hi;         % 2x3
                 U = Rg * Hi;                    % 2x3
-                TtT = T' * T;   UtU = U' * U;
-                TtU = T' * U;   UtT = U' * T;
 
-                ell = T * xh + U * uh;
-                B_const = 0.5 * (ell' * ell);
-                f_hat = xh' * M * (xh + uh) - B_const;
+                % b = T*xh + U*uh  (论文 b, 在 u_hat 处)
+                ell_hat = T * x_anchor + U * u_anchor_k;  % (I+R)*H*x_anchor + R*H*u_anchor_k (锚点)
+                B_const = 0.5 * (ell_hat' * ell_hat);  % B 项 (常数)
 
-                gx = (M + M') * xh + M' * uh  -  TtT * xh  -  TtU * uh;
-                gu = M' * xh                  -  UtU * uh   -  UtT * xh;
+                % L 项 = b'*T*(x_v - xh) + b'*U*(u - uh)  (论文公式 16 L)
+                %   利用 Sigma_{l<k}(u_l - u_hat_l) = nu_{k-1} - nu_hat_{k-1} = x_v - xh
+                %   L 同时依赖 x 和 u!
+                grad_xv_L = T' * ell_hat;       % grad_{x_v} L = T'*b, 3x1
+                grad_u_L  = U' * ell_hat;       % grad_u L = U'*b, 3x1
 
-                rhs = f_hat + gx' * xh + gu' * uh;
-                coeff_v = -gx;
-                coeff_u = -gu;
-                ug_ni   = -rhs;
+                % A 项 (凸二次, 在切点 (xh,uh)=(v_cut,u_cut) 处求值)
+                A_xh_uh = xh'*Mn*xh + xh'*Mn*uh + 0.5*uh'*Mn*uh;
+
+                % L 项 (在切点处, 锚点固定为 u_anchor; 当 u_cut≠u_anchor 时 L≠0)
+                %   L = ell_anchor' * (T*(x_cut - x_anchor) + U*(u_cut - u_anchor_k))
+                L_cut = ell_hat' * (T*(xh - x_anchor) + U*(uh - u_anchor_k));
+
+                % C(xh,uh) = A(xh,uh) - B_const - L_cut
+                C_xh_uh = A_xh_uh - B_const - L_cut;
+
+                % C 的梯度: grad C = grad A - grad L (B 是常数)
+                grad_x_C = 2*Mn*xh + Mn*uh - grad_xv_L;  % grad_x A - grad_x L
+                grad_u_C = Mn*(xh+uh) - grad_u_L;         % grad_u A - grad_u L
+
+                % 线性化: grad_x_C'*x + grad_u_C'*u <= rhs
+                rhs = grad_x_C'*xh + grad_u_C'*uh - C_xh_uh;
+                coeff_v = grad_x_C;             % 3x1
+                coeff_u = grad_u_C;             % 3x1
+                ug_ni   = rhs;
                 lg_ni   = -1e8;
 
                 C_ni = zeros(1, 6);   C_ni(4:6) = coeff_v';
@@ -245,17 +312,39 @@
             end
         end
     end
+    end % for c = 1:n_cuts
 
     %% =====================================================
     % 7. 返回 (字段名对齐 HPIPM ocp_qp API)
     %    ×2 约定: 构造时统一×2 (Q_eff, R_eff, r 均已×2)
     %    set 时不再×2; const 不×2 (HPIPM const 无 1/2 前缀)
     % =====================================================
-    Q_eff = 2 * (C' * Q * C);                  % 6×6 blkdiag(Q, 0_3), 已×2
+    % Q_eff 逐 stage 不同 (与 Dense QCQP construct_complete_qp_from_rss.m 一致):
+    %   Dense QCQP: 位置代价 k=2..K, 姿态代价 k=1..K
+    %   OCP QP stage n 对应论文 k=n:
+    %     stage 0 (k=0): Q=0 (e_0 是已知常数, 不加代价)
+    %     stage 1 (k=1): Q = 2*diag(0, 0, w_psi, 0, 0, 0) (仅姿态)
+    %     stage 2..K:    Q = 2*diag(w_pos, w_pos, w_psi, 0, 0, 0) (位置+姿态)
+    % 用 2D 堆叠 (6, 6*N_stages) 避免 MATLAB 3D→numpy 3D 维度转置问题
+    Q_pos_psi = 2 * diag([w_pos, w_pos, w_psi, 0, 0, 0]);  % stage 2..K (已×2)
+    Q_psi_only = 2 * diag([0, 0, w_psi, 0, 0, 0]);         % stage 1 (已×2)
+    Q_zero = zeros(6);                                      % stage 0
+
+    Q_eff = zeros(6, 6*N_stages);              % 2D 堆叠: 每 6 列为一个 stage 的 Q
+    Q_eff(:, 1:6) = Q_zero;                    % stage 0 (k=0)
+    Q_eff(:, 7:12) = Q_psi_only;               % stage 1 (k=1)
+    for s = 3:N_stages
+        Q_eff(:, (s-1)*6+1:s*6) = Q_pos_psi;   % stage 2..K (k=2..K)
+    end
+
     R_eff = 2 * (R + rho * eye(3));            % 3×3 (R + rho*I), 已×2
+    S_eff = zeros(3, 6);                        % HPIPM S (nu*nx), no cross term, no x2
+    q_stack = zeros(6, N_stages);               % HPIPM q (nx*N_stages), no linear term, no x2
 
     ocp.A  = A;      ocp.B  = B;                % HPIPM 字段 A, B
-    ocp.Q_eff = Q_eff;  ocp.R_eff = R_eff;     % 已×2 (set 时不×2)
+    ocp.Q_eff = Q_eff;  ocp.R_eff = R_eff;     % Q_eff 为 2D (6, 6*N_stages), 已×2
+    ocp.S_eff = S_eff;                          % HPIPM S (nu*nx), no x2
+    ocp.q_stack = q_stack;                      % HPIPM q (nx*N_stages), no x2
     ocp.b  = b_list;                            % HPIPM 字段 b (bias)
     ocp.r  = r_list;                            % HPIPM 字段 r (控制线性项, 已×2)
     ocp.const = const;                         % 不×2 (HPIPM const 无 1/2 前缀)
@@ -269,10 +358,10 @@
     %   stage K-1:   2*ng_wheels + ng_cone = 4N (轮速 + 转向锥 + 终端轮速)
     %   stage K:     0 (终端 nu=0, 无约束)
     if K >= 2
-        ng_arr = [ng_cone, repmat(ng_wheels+ng_cone, 1, K-2), 2*ng_wheels+ng_cone, 0];
+        ng_arr = n_cuts * [ng_cone, repmat(ng_wheels+ng_cone, 1, K-2), 2*ng_wheels+ng_cone, 0];
     else
         % K=1 边界情况: 只有 stage 0 和 stage 1
-        ng_arr = [2*ng_wheels+ng_cone, 0];
+        ng_arr = n_cuts * [2*ng_wheels+ng_cone, 0];
     end
     ocp.ng = ng_arr;
     ocp.nbx = [6, repmat(0, 1, K)];           % [6, 0, ..., 0] (仅 stage 0 有 box bounds)

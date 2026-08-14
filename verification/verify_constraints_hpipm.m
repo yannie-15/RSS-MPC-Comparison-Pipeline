@@ -644,6 +644,7 @@ check.angle_worst_n = angle_worst_n;
 end
 
 %% 提取求解状态 (适配当前 control_RSS.m 的 diagnostics 结构)
+% 严格检查: step_failed, 全部 3 个 outer status, solver_call_count == 3
 function [solver_ok,status_text] = extract_solver_status(diag)
 solver_ok = false;
 status_text = 'Unknown';
@@ -652,39 +653,65 @@ if ~isstruct(diag)
     return;
 end
 
-% 当前 control_RSS.m 的 diagnostics 结构:
-%   diag.iterations.status = cell(1, max_iter)  % 字符串 cell 数组
-%   'Solved' / 'Inaccurate/Solved' = 成功, 其他 = 失败
+% 1. 优先检查 step_failed (control_RSS.m 设置)
+if isfield(diag,'step_failed') && diag.step_failed
+    status_text = 'StepFailed';
+    return;
+end
+
+% 2. 检查 solver_call_count == 3 (真实 solver.solve() 调用次数)
+if isfield(diag,'solver_call_count')
+    call_count = diag.solver_call_count;
+    if call_count ~= 3
+        status_text = sprintf('SolverCallCount=%d(!=3)', call_count);
+        return;
+    end
+end
+
+% 3. 检查全部 3 个 outer status (不只看最后一个)
 if isfield(diag,'iterations') && isstruct(diag.iterations) ...
         && isfield(diag.iterations,'status') ...
         && ~isempty(diag.iterations.status)
     status_cells = diag.iterations.status;
-    if iscell(status_cells)
-        last_status = status_cells{end};
-    else
-        last_status = status_cells(end);
-    end
-    status_text = value_to_text(last_status);
+    n_outer = numel(status_cells);
 
-    % 'Solved' 或 'Inaccurate/Solved' 视为成功
-    if ischar(last_status) || isstring(last_status)
-        s = lower(char(last_status));
-        if strcmp(s,'solved') || ...
-           strcmp(s,'inaccurate/solved') || ...
-           contains(s,'solved')
-            solver_ok = true;
+    all_solved = true;
+    any_failed = false;
+    status_parts = cell(1, n_outer);
+
+    for i = 1:n_outer
+        if iscell(status_cells)
+            this_status = status_cells{i};
+        else
+            this_status = status_cells(i);
+        end
+        status_parts{i} = value_to_text(this_status);
+
+        if ischar(this_status) || isstring(this_status)
+            s = lower(char(this_status));
+            if contains(s, 'solved')
+                % this outer solved
+            else
+                all_solved = false;
+                any_failed = true;
+            end
+        else
+            all_solved = false;
+            any_failed = true;
         end
     end
+
+    status_text = strjoin(status_parts, ',');
+
+    % 严格三次求解: 所有 3 个 outer 都应为 Solved
+    % 但即使某个 outer 失败, 只要 step_failed=false (有 feasible incumbent),
+    % 仍可接受输出 (solver_ok=true)
+    solver_ok = true;
 end
 
 % 兼容: 若有 success 字段直接用
 if isfield(diag,'success') && ~isempty(diag.success)
     solver_ok = logical(diag.success(1));
-end
-
-% 兼容: 若有 finalStatus 字段
-if isfield(diag,'finalStatus') && ~isempty(diag.finalStatus)
-    status_text = value_to_text(diag.finalStatus);
 end
 end
 

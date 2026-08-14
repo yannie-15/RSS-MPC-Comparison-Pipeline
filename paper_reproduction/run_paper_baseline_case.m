@@ -78,8 +78,19 @@ function summary = run_paper_baseline_case(config, scenario)
             error('run_paper_baseline_case:UnsupportedAlgorithm', ...
                 '不支持算法: %s', algorithm);
     end
+    % 保存用户传入的 solver 模式 (config 会被 alg_params 覆盖)
+    user_solver = '';
+    if isfield(config, 'solver') && ~isempty(config.solver)
+        user_solver = config.solver;
+    end
+
     alg_params.algorithm = algorithm;
     config = alg_params;
+
+    % 恢复 solver 模式 ('ocpqp' 默认 / 'denseqcqp' 精确二次约束)
+    if ~isempty(user_solver)
+        config.solver = user_solver;
+    end
 
     %% =====================================================
     % 循环外一次性 addpath 当前算法的 submodule
@@ -158,6 +169,12 @@ function summary = run_paper_baseline_case(config, scenario)
     stepFinite = true(1, num_steps);         % 自己检查 NaN/Inf
     stepWarmstarted = false(1, num_steps);   % submodule 不返回
     stepFailed = false(1, num_steps);
+    stepApproximate = false(1, num_steps);  % 使用 approximate incumbent (非严格可行)
+    step_solver_call_count = zeros(1, num_steps);  % 真实 HPIPM solver.solve() 调用数 (proposed-3iter)
+    % 约束违反量 per-step (由 run_paper_baseline_case 维护, 不依赖 persistent)
+    step_wheel_viol = zeros(1, num_steps);  % 原始轮速约束违反
+    step_cone_viol = zeros(1, num_steps);   % 原始转向锥约束违反
+    step_incumbent_type = cell(1, num_steps); % 'strict'/'approximate'/'none'
 
     success = true;
     failureReason = '';
@@ -182,45 +199,86 @@ function summary = run_paper_baseline_case(config, scenario)
             switch algorithm
                 case 'proposed-3iter'
                     % RSS_proposed: [u, new_state_dot, velocity, diagnostics] = control_RSS(path, step, state_dot, state)
-                    % Warm start 通过全局 RSS_WARMSTART_UHAT 传递 (保持 4 参数签名, 防 MATLAB 参数缓存错误)
-                    global RSS_WARMSTART_UHAT;
-                    if k == 1; RSS_WARMSTART_UHAT = []; end
-                    clear K H R xInit control_RSS
-                    % 首步诊断: 确认 MATLAB 实际加载的 control_RSS.m 版本
+                    % 求解器通过 cfg.solver 切换 (三模式 switch-case):
+                    %   'ocpqp'    (默认) → control_RSS           (HPIPM OCP QP + 线性化约束, legacy)
+                    %   'ocpqcqp'         → control_RSS_ocpqcqp   (HPIPM OCP QCQP, 精确二次约束)
+                    %   'denseqcqp'       → control_RSS_denseqcqp (HPIPM Dense QCQP, Golden oracle)
+                    global RSS_WARMSTART_UHAT RSS_SOLVER_MODE;
                     if k == 1
-                        crss_path = which('control_RSS');
-                        fprintf('[proposed-3iter 诊断] control_RSS.m 路径: %s\n', crss_path);
-                        try
-                            fid = fopen(crss_path, 'r');
-                            if fid ~= -1
-                                line34 = '';
-                                for li = 1:34
-                                    line34 = fgetl(fid);
-                                end
-                                fclose(fid);
-                                fprintf('[proposed-3iter 诊断] control_RSS.m 第34行: %s\n', line34);
-                            end
-                        catch
+                        RSS_WARMSTART_UHAT = [];
+                        if ~isfield(config, 'solver') || isempty(config.solver)
+                            config.solver = 'ocpqcqp';  % 默认
                         end
-                        try
-                            [sel_solver, avail_solvers] = cvx_solver;
-                            fprintf('[proposed-3iter 诊断] CVX 当前 solver: %s\n', sel_solver);
-                            fprintf('[proposed-3iter 诊断] CVX 可用 solvers: %s\n', strjoin(avail_solvers, ', '));
-                        catch
+                        solver_mode = lower(config.solver);
+                        switch solver_mode
+                            case 'ocpqp'
+                                fprintf('[proposed-3iter] 求解器: control_RSS (OCP QP, 线性化约束, legacy)\n');
+                            case 'ocpqcqp'
+                                fprintf('[proposed-3iter] 求解器: control_RSS_ocpqcqp (OCP QCQP, 精确二次约束)\n');
+                            case 'denseqcqp'
+                                fprintf('[proposed-3iter] 求解器: control_RSS_denseqcqp (Dense QCQP, Golden oracle)\n');
+                            otherwise
+                                warning('未知 solver mode: %s, 使用默认 ocpqp', config.solver);
+                                solver_mode = 'ocpqp';
                         end
+                        RSS_SOLVER_MODE = solver_mode;
                     end
-                    [u_full, worldVelocity, bodyVelocity, diagnostics] = ...
-                        control_RSS(path, k, lastBodyVelocity, state');
+                    solver_mode = RSS_SOLVER_MODE;
+                    clear K H R xInit control_RSS control_RSS_denseqcqp control_RSS_ocpqcqp
+                    switch solver_mode
+                        case 'ocpqp'
+                            [u_full, worldVelocity, bodyVelocity, diagnostics] = ...
+                                control_RSS(path, k, lastBodyVelocity, state');
+                        case 'ocpqcqp'
+                            [u_full, worldVelocity, bodyVelocity, diagnostics] = ...
+                                control_RSS_ocpqcqp(path, k, lastBodyVelocity, state');
+                        case 'denseqcqp'
+                            [u_full, worldVelocity, bodyVelocity, diagnostics] = ...
+                                control_RSS_denseqcqp(path, k, lastBodyVelocity, state');
+                    end
                     u = u_full(:, 1);
                     solve_time = diagnostics.total_solve_time;  % SCP 迭代总耗时
-                    iter_num = diagnostics.max_iter;            % SCP 实际迭代数 (自适应收敛后可能 < 10)
+                    % 使用真实 solver_call_count (不是 max_iter, 后者始终为 3 但不代表实际调用次数)
+                    iter_num = diagnostics.solver_call_count;
+                    step_solver_call_count(k) = diagnostics.solver_call_count;
 
-                    % ========== Warm start: 通过全局 RSS_WARMSTART_UHAT 保存 u_full 供下一步 ==========
-                    if ~any(isnan(u_full(:)))
-                        RSS_WARMSTART_UHAT = u_full(:);
-                    else
-                        RSS_WARMSTART_UHAT = [];  % 失败则冷启动 (1e-4)
+                    % ========== 记录 per-step 约束违反量 (不用 persistent) ==========
+                    if isfield(diagnostics, 'orig_wheel_viol_final')
+                        step_wheel_viol(k) = diagnostics.orig_wheel_viol_final;
+                        step_cone_viol(k) = diagnostics.orig_cone_viol_final;
                     end
+                    if isfield(diagnostics, 'incumbent_type')
+                        step_incumbent_type{k} = diagnostics.incumbent_type;
+                    end
+                    if isfield(diagnostics, 'step_approximate') && diagnostics.step_approximate
+                        stepApproximate(k) = true;
+                    end
+
+                    % ========== 检查 step_failed: 不得忽略 ==========
+                    % control_RSS.m 在三次 outer 后无任何 incumbent 时设置 step_failed=true
+                    % 此时 u = u_seed (未验证), 不得用于推进闭环状态
+                    if isfield(diagnostics, 'step_failed') && diagnostics.step_failed
+                        step_ok = false;
+                        fail_reason = 'diagnostics.step_failed=true (三次 outer 后无 incumbent)';
+                        stepFailed(k) = true;
+                        stepFinite(k) = false;
+                        if first_fail_step == 0
+                            first_fail_step = k;
+                        end
+                        success = false;
+                        failureReason = fail_reason;
+                        fprintf('[%s: step %d] STEP FAILED: %s\n', algorithm, k, fail_reason);
+                        break;
+                    end
+
+                    % ========== 检查 solver_call_count == 3 ==========
+                    if diagnostics.solver_call_count ~= 3
+                        fprintf('[%s: step %d] 警告: solver_call_count=%d (预期 3)\n', ...
+                            algorithm, k, diagnostics.solver_call_count);
+                    end
+
+                    % ========== Warm start: 由 control_RSS.m 内部管理 RSS_WARMSTART_UHAT ==========
+                    % control_RSS.m 已保存 RSS_WARMSTART_UHAT = u (3×K 矩阵), 此处不再覆盖
 
                 case 'e-lmpc'
                     % RSS_sqp: [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state)
@@ -336,6 +394,16 @@ function summary = run_paper_baseline_case(config, scenario)
         wheelSpeeds = zeros(num_wheels, 0);
         wheelAngles = zeros(num_wheels, 0);
         solveTimes = [];
+        stepExitflags = stepExitflags(1:0);
+        stepIterations = stepIterations(1:0);
+        stepFinite = stepFinite(1:0);
+        stepWarmstarted = stepWarmstarted(1:0);
+        stepFailed = stepFailed(1:0);
+        stepApproximate = stepApproximate(1:0);
+        step_solver_call_count = step_solver_call_count(1:0);
+        step_wheel_viol = step_wheel_viol(1:0);
+        step_cone_viol = step_cone_viol(1:0);
+        step_incumbent_type = step_incumbent_type(1:0);
     else
         states = states(:, 1:solved_count+1);
         worldVelocities = worldVelocities(:, 1:solved_count);
@@ -349,6 +417,11 @@ function summary = run_paper_baseline_case(config, scenario)
         stepFinite = stepFinite(1:solved_count);
         stepWarmstarted = stepWarmstarted(1:solved_count);
         stepFailed = stepFailed(1:solved_count);
+        stepApproximate = stepApproximate(1:solved_count);
+        step_solver_call_count = step_solver_call_count(1:solved_count);
+        step_wheel_viol = step_wheel_viol(1:solved_count);
+        step_cone_viol = step_cone_viol(1:solved_count);
+        step_incumbent_type = step_incumbent_type(1:solved_count);
     end
 
     %% =====================================================
@@ -360,7 +433,29 @@ function summary = run_paper_baseline_case(config, scenario)
 
     % [P1-3] 步骤级成功率: 解有限且未标记失败
     n_valid_steps = sum(~stepFailed);
+    if solved_count == 0
+        n_valid_steps = 0;
+    end
     metrics.validStepRate = n_valid_steps / max(solved_count, 1);
+
+    % J 分解: J_position, J_heading, J_control, J_total
+    % J_total = sum_k [ 30*(ex^2+ey^2) + 1*e_psi^2 + 0.3*||u_k||^2 ]
+    Q_w = [30, 30, 1];      % [w_pos, w_pos, w_psi]
+    R_w = [0.3, 0.3, 0.3];
+    J_position = 0; J_heading = 0; J_control = 0;
+    num_ref = size(path, 2);
+    for kk = 1:solved_count
+        ref_idx = min(kk, num_ref);
+        e = states(:, kk) - path(:, ref_idx);
+        e(3) = mod(e(3) + pi, 2*pi) - pi;  % wrap angle
+        J_position = J_position + Q_w(1) * (e(1)^2 + e(2)^2);
+        J_heading  = J_heading  + Q_w(3) * e(3)^2;
+        J_control  = J_control  + R_w(1) * sum(executedU(:, kk).^2);
+    end
+    metrics.J_position = J_position;
+    metrics.J_heading = J_heading;
+    metrics.J_control = J_control;
+    metrics.J_total = J_position + J_heading + J_control;
 
     % [P1-4] 耗时统计: 含 warm-up 排除
     n_warmup = min(5, max(1, floor(solved_count * 0.05)));  % 排除前 5 步或 5%
@@ -383,6 +478,26 @@ function summary = run_paper_baseline_case(config, scenario)
         metrics.meanSolveTimePostWarmup = metrics.meanSolveTime;
     end
     metrics.warmupExcluded = n_warmup;
+
+    %% =====================================================
+    % 约束违反量汇总 (由 run_paper_baseline_case 维护, 不依赖 persistent)
+    % ======================================================
+    if solved_count > 0
+        max_wheel_viol_reported = max(step_wheel_viol);
+        max_cone_viol_reported = max(step_cone_viol);
+        [max_wheel_viol_reported, step_wheel_max] = max(step_wheel_viol);
+        [max_cone_viol_reported, step_cone_max] = max(step_cone_viol);
+        cnt_wheel_viol = sum(step_wheel_viol > 1e-6);
+        cnt_cone_viol = sum(step_cone_viol > 1e-6);
+        cnt_strict = sum(strcmp(step_incumbent_type, 'strict'));
+        cnt_approximate = sum(strcmp(step_incumbent_type, 'approximate'));
+        cnt_none = sum(strcmp(step_incumbent_type, 'none'));
+    else
+        max_wheel_viol_reported = 0; max_cone_viol_reported = 0;
+        step_wheel_max = 0; step_cone_max = 0;
+        cnt_wheel_viol = 0; cnt_cone_viol = 0;
+        cnt_strict = 0; cnt_approximate = 0; cnt_none = 0;
+    end
 
     %% =====================================================
     % 组装输出
@@ -410,9 +525,27 @@ function summary = run_paper_baseline_case(config, scenario)
     summary.solverInfo.finite = stepFinite;
     summary.solverInfo.warmstarted = stepWarmstarted;
     summary.solverInfo.stepFailed = stepFailed;
+    summary.solverInfo.stepApproximate = stepApproximate;
     summary.solverInfo.nValidSteps = n_valid_steps;
     summary.solverInfo.nFailedSteps = sum(stepFailed);
+    summary.solverInfo.nApproximateSteps = sum(stepApproximate);
     summary.solverInfo.firstFailStep = first_fail_step;
+    summary.solverInfo.solverCallCounts = step_solver_call_count;  % 真实 HPIPM solver.solve() 调用数
+
+    % 约束违反量汇总 (per-step 数组 + 汇总)
+    summary.constraintInfo = struct();
+    summary.constraintInfo.wheelViolPerStep = step_wheel_viol;
+    summary.constraintInfo.coneViolPerStep = step_cone_viol;
+    summary.constraintInfo.incumbentTypePerStep = step_incumbent_type;
+    summary.constraintInfo.maxWheelViol = max_wheel_viol_reported;
+    summary.constraintInfo.maxConeViol = max_cone_viol_reported;
+    summary.constraintInfo.stepWheelMax = step_wheel_max;
+    summary.constraintInfo.stepConeMax = step_cone_max;
+    summary.constraintInfo.cntWheelViol = cnt_wheel_viol;
+    summary.constraintInfo.cntConeViol = cnt_cone_viol;
+    summary.constraintInfo.cntStrictIncumbent = cnt_strict;
+    summary.constraintInfo.cntApproximateIncumbent = cnt_approximate;
+    summary.constraintInfo.cntNoneIncumbent = cnt_none;
 
     % [P1-4] 耗时细节
     summary.timing = struct();
@@ -422,17 +555,17 @@ function summary = run_paper_baseline_case(config, scenario)
     summary.timing.q3SolveTime = metrics.q3SolveTime;
     summary.timing.warmupExcluded = n_warmup;
 
-    % 打印结果
+    % 打印结果 (仓库 README 风格: 简洁汇总行)
     if success
         fprintf('[%s: %s] RMSE=%.6f, medianSolveTime=%.4fs, J_total=%.4f, validSteps=%d/%d\n', ...
             algorithm, scenario.name, metrics.rmse, metrics.medianSolveTime, ...
-            metrics.trajectoryCost, n_valid_steps, solved_count);
+            metrics.J_total, n_valid_steps, solved_count);
     else
         fprintf('[%s: %s] FAILED at step %d/%d: %s\n', ...
             algorithm, scenario.name, first_fail_step, num_steps, failureReason);
     end
 
-    % 打印 iterations 分布 (替代原 exitflag 分布)
+    % 打印 iterations 分布
     if solved_count > 0
         valid_iters = stepIterations(~isnan(stepIterations));
         if ~isempty(valid_iters)
@@ -444,8 +577,13 @@ function summary = run_paper_baseline_case(config, scenario)
             end
             fprintf('\n');
         end
-        if sum(stepFailed) > 0
-            fprintf('  失败步 (解非有限): %d/%d\n', sum(stepFailed), solved_count);
+
+        % 约束违反量汇总 (proposed-3iter 专用, 简洁格式)
+        if strcmp(algorithm, 'proposed-3iter')
+            fprintf('  solver_calls/step: %d | incumbent: strict=%d, approx=%d, none=%d\n', ...
+                step_solver_call_count(1), cnt_strict, cnt_approximate, cnt_none);
+            fprintf('  约束违反: maxWheel=%.2e (step %d), maxCone=%.2e (step %d)\n', ...
+                max_wheel_viol_reported, step_wheel_max, max_cone_viol_reported, step_cone_max);
         end
     end
 end
