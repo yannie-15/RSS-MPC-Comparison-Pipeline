@@ -2,25 +2,25 @@ function summary = run_one_case(config, scenario)
 % RUN_ONE_CASE 运行单次闭环仿真并计算完整指标
 %
 % 算法调用架构:
-%   - proposed-3iter  → algorithms/RSS_proposed/control_RSS.m   (git submodule, 0121 分支)
+%   - proposed-3iter  → algorithms/RSS_proposed/control_RSS_ocpqcqp.m  (HPIPM OCP QCQP + SCP)
 %   - e-lmpc          → algorithms/RSS_sqp/control_RSS.m        (git submodule)
 %   - interior-point  → algorithms/RSS_fmincon/control_RSS.m    (git submodule, main 分支)
 %   - active-set      → algorithms/RSS_active_set/control_RSS.m (git submodule, active-set 分支)
 %
-% 三个 submodule 的接口各不相同, 本函数负责适配:
-%   RSS_proposed (0121):  [u, new_state_dot, velocity] = control_RSS(path, step, state_dot, state)
+% 各算法接口不同, 本函数负责适配:
+%   RSS_proposed:  [u, new_state_dot, velocity, diagnostics] = control_RSS_ocpqcqp(path, step, state_dot, state)
 %   RSS_sqp:       [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state)
 %   RSS_fmincon / RSS_active_set:
 %                    [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state, params)
 %
 % Config 覆盖机制:
-%   proposed / e-lmpc 的 control_RSS 不接收外部 config, 内部调 config()。
+%   proposed / e-lmpc 的控制器不接收外部 config, 内部调 config()。
 %   本函数通过 setup_config_override 在临时目录写 config.m, 返回 main 传入的
 %   随机 config (含 seed 场景参数), 通过 addpath 覆盖 submodule 的 config.m。
 %   interior-point / active-set 接收外部 config, 直接传入。
 %
-% 注: RSS_proposed 0121 分支返回 [u, new_state_dot, velocity], 其中 u 为 3×K 矩阵,
-%      new_state_dot 为世界坐标系速度, velocity 为车体系速度。solve_time/iter_num 缺失记为 NaN。
+% 注: RSS_proposed 返回 [u, new_state_dot, velocity, diagnostics], 其中 u 为 3×K 矩阵,
+%      new_state_dot 为世界坐标系速度, velocity 为车体系速度。solve_time 从 diagnostics 提取。
 
     if nargin < 1 || isempty(config)
         config = defaultConfig();
@@ -53,7 +53,7 @@ function summary = run_one_case(config, scenario)
 
     %% =====================================================
     % 设置 config 覆盖: 让 submodule 内部的 config() 返回 main 的随机 config
-    % (proposed / e-lmpc 的 control_RSS 不接收外部 config, 内部调 config())
+    % (proposed / e-lmpc 的控制器不接收外部 config, 内部调 config())
     % ======================================================
     override_dir = setup_config_override(config);
     cleanup_obj = onCleanup(@() rmpath(override_dir));
@@ -106,14 +106,14 @@ function summary = run_one_case(config, scenario)
             % 按算法名分发调用
             switch algorithm
                 case 'proposed-3iter'
-                    % RSS_proposed 0121: [u, new_state_dot, velocity] = control_RSS(path, step, state_dot, state)
+                    % RSS_proposed: [u, new_state_dot, velocity, diagnostics] = control_RSS_ocpqcqp(path, step, state_dot, state)
                     addpath(submodule_dirs('proposed-3iter'));
                     addpath(override_dir);  % 确保 main 的 config 覆盖 submodule 的 config
-                    [u_full, worldVelocity, bodyVelocity] = ...
-                        control_RSS(path, k, lastBodyVelocity, state');
+                    [u_full, worldVelocity, bodyVelocity, diagnostics] = ...
+                        control_RSS_ocpqcqp(path, k, lastBodyVelocity, state');
                     rmpath(submodule_dirs('proposed-3iter'));
                     u = u_full(:, 1);
-                    solve_time = NaN;  % submodule 不输出 solve_time (用 diary 捕获)
+                    solve_time = diagnostics.total_solve_time;  % SCP 迭代总耗时
 
                 case 'e-lmpc'
                     % RSS_sqp: [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state)
@@ -249,7 +249,7 @@ end
 function override_dir = setup_config_override(cfg)
 %SETUP_CONFIG_OVERRIDE 创建临时 config.m, 用 main 的 config 覆盖 submodule 的 config
 %
-% proposed / e-lmpc 的 control_RSS.m 内部调 config() 取参数, 不接收外部 config。
+% proposed / e-lmpc 的控制器内部调 config() 取参数, 不接收外部 config。
 % 本函数在临时目录写一个 config.m, 返回 main 传入的 cfg, 通过 addpath 覆盖。
 %
 % 调用前: addpath(override_dir) 确保 override 优先于 submodule 目录

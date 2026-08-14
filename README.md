@@ -21,10 +21,11 @@ RSS-MPC-Comparison-Pipeline-rss_hpipm/
 │   │   ├── config.m                     #   算法参数
 │   │   ├── hpipm_qp_solver.py           #   HPIPM Python 接口 (solve_ocp_qcqp / solve_qcqp)
 │   │   ├── build_hpipm_windows.sh       #   Windows MSYS2 编译脚本
-│   │   ├── test_ocp_qcqp_construction_equivalence.m  # Test A: 构造等价性
-│   │   ├── test_hpipm_ocp_qcqp_smoke.m              # Test B: wrapper 冒烟测试
-│   │   ├── test_ocp_qcqp_fixed_qk_alignment.m       # Test C: 固定 QK 对齐
-│   │   └── test_ocp_qcqp_golden_100steps.m          # Test D: 100 步闭环 Golden 对比
+│   │   ├── tests/                       #   测试脚本 (Test A/B/C/D)
+│   │   │   ├── test_ocp_qcqp_construction_equivalence.m  # Test A: 构造等价性
+│   │   │   ├── test_hpipm_ocp_qcqp_smoke.m              # Test B: wrapper 冒烟测试
+│   │   │   ├── test_ocp_qcqp_fixed_qk_alignment.m       # Test C: 固定 QK 对齐
+│   │   │   └── test_ocp_qcqp_golden_100steps.m          # Test D: 100 步闭环 Golden 对比
 │   ├── RSS_sqp/                         # → github.com/serendipitjx/RSS_sqp (submodule, main)
 │   ├── RSS_fmincon/                     # → github.com/serendipitjx/RSS_fmincon (submodule, main)
 │   ├── RSS_active_set/                  # → github.com/serendipitjx/RSS_fmincon (submodule, active-set 分支)
@@ -251,6 +252,7 @@ run_paper_baseline_case(cfg);
 cd('d:/PROJECT/RSS-MPC-Comparison-Pipeline-rss_hpipm');
 addpath('core'); setup_paths;
 addpath('algorithms/RSS_proposed');
+addpath('algorithms/RSS_proposed/tests');
 addpath('paper_reproduction');
 setenv('HPIPM_OCP_QCQP_MODE', 'speed');   % 必须设为 speed 以绕过 DLL bug
 test_ocp_qcqp_golden_100steps;

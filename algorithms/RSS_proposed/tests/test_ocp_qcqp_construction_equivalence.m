@@ -14,10 +14,12 @@ function test_ocp_qcqp_construction_equivalence()
 % 用法:
 %   addpath('core'); setup_paths;
 %   addpath('algorithms/RSS_proposed');
+%   addpath('algorithms/RSS_proposed/tests');
 %   addpath('paper_reproduction');
 %   test_ocp_qcqp_construction_equivalence
 
-    addpath(fileparts(mfilename('fullpath')));
+    % 测试文件位于 algorithms/RSS_proposed/tests/, 需添加父目录以访问 control/config 等
+    addpath(fileparts(fileparts(mfilename('fullpath'))));
     params = config();
 
     K = 6;

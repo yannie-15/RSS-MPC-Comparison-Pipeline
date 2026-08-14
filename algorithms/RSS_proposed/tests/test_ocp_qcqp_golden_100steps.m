@@ -24,10 +24,12 @@ function test_ocp_qcqp_golden_100steps()
 %   rmpath('D:\PROJECT\RSS_V2\matlab'); rmpath('D:\Projects\RSS\matlab');
 %   clear all; close all; clc;
 %   run('core/setup_paths.m'); addpath('paper_reproduction');
+%   addpath('algorithms/RSS_proposed/tests');
+%   setenv('HPIPM_OCP_QCQP_MODE','speed');
 %   test_ocp_qcqp_golden_100steps
 
-    script_dir = fileparts(mfilename('fullpath'));
-    addpath(script_dir);
+    % 测试文件位于 algorithms/RSS_proposed/tests/, 需添加父目录以访问 control/config 等
+    addpath(fileparts(fileparts(mfilename('fullpath'))));
 
     fprintf('============== Test D: 100 步闭环 Golden 对齐 ==============\n');
 

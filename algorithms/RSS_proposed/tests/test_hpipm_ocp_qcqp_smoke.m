@@ -14,14 +14,16 @@ function test_hpipm_ocp_qcqp_smoke()
 % 用法:
 %   addpath('core'); setup_paths;
 %   addpath('algorithms/RSS_proposed');
+%   addpath('algorithms/RSS_proposed/tests');
 %   test_hpipm_ocp_qcqp_smoke
 
-    addpath(fileparts(mfilename('fullpath')));
+    % 测试文件位于 algorithms/RSS_proposed/tests/, 需添加父目录以访问 hpipm_qp_solver 等
+    parent_dir = fileparts(fileparts(mfilename('fullpath')));
+    addpath(parent_dir);
 
     % ========== Python 环境设置 ==========
     sys_mod = py.importlib.import_module('sys');
-    script_path = fileparts(mfilename('fullpath'));
-    py.getattr(sys_mod, 'path').insert(0, script_path);
+    py.getattr(sys_mod, 'path').insert(0, parent_dir);
     try
         py.importlib.reload(py.importlib.import_module('hpipm_qp_solver'));
     catch

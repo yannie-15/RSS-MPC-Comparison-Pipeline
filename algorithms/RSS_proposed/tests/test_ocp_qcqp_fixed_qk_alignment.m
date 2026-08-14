@@ -16,9 +16,12 @@ function test_ocp_qcqp_fixed_qk_alignment()
 % 用法:
 %   addpath('core'); setup_paths;
 %   addpath('algorithms/RSS_proposed');
+%   addpath('algorithms/RSS_proposed/tests');
 %   test_ocp_qcqp_fixed_qk_alignment
 
-    addpath(fileparts(mfilename('fullpath')));
+    % 测试文件位于 algorithms/RSS_proposed/tests/, 需添加父目录以访问 control/config 等
+    parent_dir = fileparts(fileparts(mfilename('fullpath')));
+    addpath(parent_dir);
     params = config();
 
     K = 6; nx = 6; nu = 3;
@@ -35,8 +38,7 @@ function test_ocp_qcqp_fixed_qk_alignment()
 
     % ========== Python 环境设置 ==========
     sys_mod = py.importlib.import_module('sys');
-    script_path = fileparts(mfilename('fullpath'));
-    py.getattr(sys_mod, 'path').insert(0, script_path);
+    py.getattr(sys_mod, 'path').insert(0, parent_dir);
     try
         py.importlib.reload(py.importlib.import_module('hpipm_qp_solver'));
     catch
