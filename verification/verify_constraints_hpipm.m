@@ -27,10 +27,9 @@ function report = verify_constraints_hpipm()
 %
 % 用法：
 %   cd('d:/PROJECT/RSS-MPC-Comparison-Pipeline-rss_hpipm')
-%   addpath('core'); setup_paths;
-%   addpath('algorithms/RSS_proposed');
+%   addpath('verification');
 %   setenv('HPIPM_OCP_QCQP_MODE','speed');
-%   cd('verification'); verify_constraints_hpipm;
+%   verify_constraints_hpipm;
 
 %% 路径设置
 this_dir = fileparts(mfilename('fullpath'));

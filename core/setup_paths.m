@@ -7,9 +7,8 @@
 %     RSS_proposed 已转为普通目录 (非 submodule), 其余三个仍为 submodule。
 %
 % 用法：
-%   cd d:\PROJECT\RSS_V2\core
-%   setup_paths
-% 或从任意功能目录调用前先 addpath('core')。
+%   cd d:\PROJECT\RSS-MPC-Comparison-Pipeline-rss_hpipm
+%   addpath('core'); setup_paths
 
 function setup_paths()
     script_dir = fileparts(mfilename('fullpath'));

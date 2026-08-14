@@ -122,12 +122,14 @@ git submodule update --init --recursive
 
 ## 命令速查
 
+> 以下 MATLAB 命令均假设当前工作目录为**项目根目录**（`RSS-MPC-Comparison-Pipeline-rss_hpipm/`）。各入口脚本内部通过 `fileparts(mfilename('fullpath'))` 自动定位依赖路径，无需 `cd` 进子目录，只需 `addpath` 即可。
+
 | 场景 | 入口 | 命令 |
 |------|------|------|
 | 4 算法批量对比 (Python) | `main.py` | `python main.py` |
-| 4 算法批量对比 (MATLAB) | `batch_simulation/main.m` | `cd batch_simulation; main` |
-| 论文 Section IV 复现 | `paper_reproduction/paper_reproduction.m` | `cd paper_reproduction; paper_reproduction` |
-| 约束验证 | `verification/verify_constraints_hpipm.m` | `cd verification; verify_constraints_hpipm` |
+| 4 算法批量对比 (MATLAB) | `batch_simulation/main.m` | `addpath('batch_simulation'); main` |
+| 论文 Section IV 复现 | `paper_reproduction/paper_reproduction.m` | `addpath('paper_reproduction'); paper_reproduction` |
+| 约束验证 | `verification/verify_constraints_hpipm.m` | `addpath('verification'); verify_constraints_hpipm` |
 | OCP QCQP Golden 对比 | `test_ocp_qcqp_golden_100steps.m` | 见下方"测试"章节 |
 
 ## Python 入口
@@ -200,7 +202,8 @@ python -c "import sys; sys.path.insert(0,'algorithms/RSS_proposed'); import hpip
 ### 运行批量对比
 
 ```matlab
-cd('batch_simulation');
+% 确保当前工作目录为项目根目录 RSS-MPC-Comparison-Pipeline-rss_hpipm/
+addpath('batch_simulation');
 
 main                                          % 默认: 1:10 seeds, 4 种算法
 main('seeds', 1:100)                          % 自定义 seed 范围
@@ -211,7 +214,8 @@ main('seeds', 1:50, 'algorithms', {'proposed-3iter'}, 'forceRegen', true)
 ## 论文复现
 
 ```matlab
-cd('paper_reproduction');
+% 确保当前工作目录为项目根目录 RSS-MPC-Comparison-Pipeline-rss_hpipm/
+addpath('paper_reproduction');
 
 paper_reproduction                                  % 重跑全部 4 种算法
 paper_reproduction({'proposed-3iter'})              % 只重跑指定算法, 保留其余
@@ -237,7 +241,7 @@ run_paper_baseline_case(cfg);
 
 ## 测试 (OCP QCQP 验证)
 
-位于 `algorithms/RSS_proposed/`，按以下顺序执行：
+位于 `algorithms/RSS_proposed/tests/`，按以下顺序执行：
 
 | 测试 | 文件 | 验证内容 |
 |---|---|---|
@@ -249,7 +253,7 @@ run_paper_baseline_case(cfg);
 运行 Test D：
 
 ```matlab
-cd('d:/PROJECT/RSS-MPC-Comparison-Pipeline-rss_hpipm');
+% 确保当前工作目录为项目根目录 RSS-MPC-Comparison-Pipeline-rss_hpipm/
 addpath('core'); setup_paths;
 addpath('algorithms/RSS_proposed');
 addpath('algorithms/RSS_proposed/tests');
@@ -261,7 +265,8 @@ test_ocp_qcqp_golden_100steps;
 ## 约束验证
 
 ```matlab
-cd('verification');
+% 确保当前工作目录为项目根目录 RSS-MPC-Comparison-Pipeline-rss_hpipm/
+addpath('verification');
 verify_constraints_hpipm
 ```
 
