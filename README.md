@@ -24,13 +24,7 @@ RSS-MPC-Comparison-Pipeline-rss_hpipm/
 │   │   ├── test_ocp_qcqp_construction_equivalence.m  # Test A: 构造等价性
 │   │   ├── test_hpipm_ocp_qcqp_smoke.m              # Test B: wrapper 冒烟测试
 │   │   ├── test_ocp_qcqp_fixed_qk_alignment.m       # Test C: 固定 QK 对齐
-│   │   ├── test_ocp_qcqp_golden_100steps.m          # Test D: 100 步闭环 Golden 对比
-│   │   └── _legacy/                     #   已弃用的 legacy OCP QP 实现 (归档)
-│   │       ├── control_RSS.m
-│   │       ├── construct_ocp_qp_from_rss.m
-│   │       ├── test_fixed_qk_alignment.m
-│   │       ├── test_tangent_plane.m
-│   │       └── libhpipm.dll.bak
+│   │   └── test_ocp_qcqp_golden_100steps.m          # Test D: 100 步闭环 Golden 对比
 │   ├── RSS_sqp/                         # → github.com/serendipitjx/RSS_sqp (submodule, main)
 │   ├── RSS_fmincon/                     # → github.com/serendipitjx/RSS_fmincon (submodule, main)
 │   ├── RSS_active_set/                  # → github.com/serendipitjx/RSS_fmincon (submodule, active-set 分支)
@@ -111,9 +105,9 @@ RSS-MPC-Comparison-Pipeline-rss_hpipm/
 
 `control_RSS_denseqcqp.m` + `construct_complete_qp_from_rss.m` 保留作为**离线对照基准**，用于验证 OCP QCQP 实现的正确性。运行时禁止使用 Dense QCQP 作为 fallback（仅作为测试基准）。
 
-### Legacy OCP QP (已弃用)
+### Legacy OCP QP (已删除)
 
-早期实现 `control_RSS.m` + `construct_ocp_qp_from_rss.m` 通过切平面线性化将二次约束转为线性约束，数学上不等价于原问题。相关文件已归档至 `algorithms/RSS_proposed/_legacy/`，不再维护。
+早期实现 `control_RSS.m` + `construct_ocp_qp_from_rss.m` 通过切平面线性化将二次约束转为线性约束，数学上不等价于原问题，已被 OCP QCQP 实现取代并删除。
 
 ## 获取项目
 
