@@ -181,7 +181,8 @@ def solve_qcqp(H, g, A, b, Hq, gq, uq, verbose=False):
     qcqp_sol = hpipm_dense_qcqp_sol(dim)
 
     # 容差 1e-8 (对齐论文 benchmark: ECOS 默认容差 abstol/reltol/feastol=1e-8)
-    arg = hpipm_dense_qcqp_solver_arg(dim, 'balance')
+    # speed 模式 (与 OCP QCQP 一致, 公平对比); 失败时 robust 重试兜底
+    arg = hpipm_dense_qcqp_solver_arg(dim, 'speed')
     arg.set('iter_max', 1000)
     arg.set('tol_stat', 1e-8)
     arg.set('tol_eq', 1e-8)
