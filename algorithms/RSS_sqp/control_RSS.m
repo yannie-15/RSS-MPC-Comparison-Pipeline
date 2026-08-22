@@ -3,7 +3,19 @@ function [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, ste
     params = config();
    
     % ================= Param Setup =================
-    K = 6; rho = 0.01; k1 = 1; epsilon = 0;
+    if isfield(params, 'K') && ~isempty(params.K)
+        K = params.K;
+    else
+        K = 6;
+    end
+    % 正则化权重 rho: 优先取 pipeline 注入 (--rho 逐步序列经 config.rho),
+    % 未注入时保持原默认 0.01
+    if isfield(params, 'rho') && ~isempty(params.rho)
+        rho = params.rho;
+    else
+        rho = 0.01;
+    end
+    k1 = 1; epsilon = 0;
     solve_time = 0;
     current_xy = [state(1), state(2)]';
     psi0 = state(3); current_nu = state_dot;

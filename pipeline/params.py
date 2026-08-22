@@ -88,6 +88,11 @@ class AlgorithmParams:
     weights: CostWeights = field(default_factory=CostWeights)
     solver: SolverSettings = field(default_factory=SolverSettings)
     max_iter: int = 3                           # SCP 外层迭代数 (论文 IV-B: 固定 3 次)
+    # 逐步 rho 序列 (CLI --rho 显式传入时非空):
+    #   None        -> 用 weights.rho (各算法默认, 不改变基线行为)
+    #   [v]         -> 常数 rho = v
+    #   [v1, v2,..] -> 第 k 步取 v_k, 序列短于总步数时保持末值
+    rho_schedule: list = None
 
     def to_dict(self) -> dict:
         return {
@@ -97,6 +102,8 @@ class AlgorithmParams:
             'vehicle': self.vehicle.to_dict(),
             'weights': self.weights.to_dict(),
             'solver': self.solver.to_dict(),
+            'rho_schedule': (list(self.rho_schedule)
+                             if self.rho_schedule else None),
         }
 
 

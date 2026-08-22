@@ -75,6 +75,16 @@ def control_rss_ocpqcqp(path: np.ndarray, step: int, state_dot: np.ndarray,
     current_xy = state[0:2].copy()
     psi0 = float(state[2])
     v0 = state_dot.copy()   # MATLAB: v0 = state_dot (闭环中实际传入车体系速度 nu_0)
+
+    # 逐步 rho 调度 (CLI --rho): 第 k 步取 rho_k = schedule[min(k-1, len-1)];
+    # 未传 schedule 时用 weights.rho 默认值 (不改变 golden 基线).
+    # rho 经 params.weights.rho 进入 construct_ocp_qcqp_from_rss
+    # (R_eff 对角 + r_stack/const 锚点正则化, 论文式 17); 求解后恢复原值,
+    # 避免污染跨步共享的 params 对象.
+    rho_orig = float(params.weights.rho)
+    if getattr(params, 'rho_schedule', None):
+        rho_idx = min(int(step) - 1, len(params.rho_schedule) - 1)
+        params.weights.rho = float(params.rho_schedule[rho_idx])
     rho = float(params.weights.rho)
 
     # ================= 迭代 Setup =================
@@ -240,6 +250,10 @@ def control_rss_ocpqcqp(path: np.ndarray, step: int, state_dot: np.ndarray,
 
     # 汇总诊断
     diagnostics['total_solve_time'] = total_solve_time
+    diagnostics['rho'] = rho          # 本步实际使用的 rho (含 --rho 逐步调度)
+
+    # 恢复传入前的 weights.rho (避免 --rho 序列污染跨步共享的 params)
+    params.weights.rho = rho_orig
 
     return u, new_state_dot, velocity, diagnostics
 

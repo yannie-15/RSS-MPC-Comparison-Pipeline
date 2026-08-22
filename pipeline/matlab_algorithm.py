@@ -20,10 +20,31 @@ workspace 一次性传入, 不逐步序列化.
 """
 
 from pathlib import Path
+import tempfile
+import os
 
 import numpy as np
+from scipy.io import savemat
 
 MATLAB_BRIDGE_ALGORITHMS = ('e-lmpc', 'interior-point', 'active-set')
+
+
+def _sanitize_for_matlab(obj):
+    """递归清洗 run_config 供 scipy savemat 序列化.
+
+    savemat 不支持 None (如未传 --rho 时 to_dict() 的 rho_schedule=None),
+    遇到会抛异常导致 PIPELINE_CONFIG 注入失败、MATLAB 侧退回旧架构兜底;
+    None 值的键直接移除 (MATLAB 侧 isfield 检查自然走默认值),
+    list/tuple 统一转 numpy 数组 (含嵌套 dict 内的 vehicle.wheel_pos).
+    """
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_matlab(v) for k, v in obj.items()
+                if v is not None}
+    if isinstance(obj, (list, tuple)):
+        arr = np.asarray(obj)
+        # numpy unicode 数组同样不被 savemat 支持: 保持原生 list (转 cell)
+        return obj if arr.dtype.kind == 'U' else arr
+    return obj
 
 
 class MatlabAlgorithmBridge:
@@ -36,7 +57,7 @@ class MatlabAlgorithmBridge:
     }
 
     def __init__(self, algorithm: str, trajectory, verbose: bool = True,
-                 repo_root=None):
+                 repo_root=None, K: float = None, run_config: dict | None = None):
         """启动 MATLAB Engine 并完成一次性初始化.
 
         trajectory: pipeline.trajectory_generator.Trajectory (提供 path/seed_id,
@@ -53,6 +74,7 @@ class MatlabAlgorithmBridge:
         self.algorithm = algorithm
         self.verbose = verbose
         self.eng = None
+        self.run_config = run_config
 
         repo_root = Path(repo_root).resolve() if repo_root else \
             Path(__file__).resolve().parent.parent
@@ -67,6 +89,60 @@ class MatlabAlgorithmBridge:
         self.eng.workspace['PIPELINE_ALGORITHM'] = self.algorithm
         self.eng.workspace['PIPELINE_SEED'] = float(trajectory.seed_id)
         self.eng.workspace['PIPELINE_PATH'] = matlab.double(path.tolist())
+        # 将请求的预测时域 K 写入 base workspace 供 matlab_control_bridge 读取
+        if K is not None:
+            try:
+                self.eng.workspace['PIPELINE_K'] = float(K)
+            except Exception:
+                # 保底：如果赋值失败，仍可由 MATLAB 端使用默认 K=6
+                pass
+        # 如果外部传入了完整 run_config，生成 .mat 并加载到 base workspace
+        run_config = None
+        try:
+            # if caller passed run_config in kwargs (simulate does), retrieve it
+            # Note: trajectory may carry much of the info; but prefer explicit run_config
+            caller_locals = None
+        except Exception:
+            pass
+        # attempt to find attribute 'run_config' on self if set externally
+        if hasattr(self, 'run_config') and self.run_config is not None:
+            run_config = self.run_config
+        # If initializer received run_config via keyword args, Python won't set it automatically,
+        # so check trajectory for algorithm_params to assemble a run_config fallback
+        if run_config is None:
+            try:
+                alg_params = getattr(trajectory, 'algorithm_params', None)
+                run_config = {
+                    'seed_id': int(trajectory.seed_id),
+                    'algorithm': self.algorithm,
+                    'K': int(K) if K is not None else None,
+                    'dt': float(getattr(trajectory, 'dt', 0.01)),
+                    'num_steps': int(getattr(trajectory, 'num_steps', trajectory.num_points if hasattr(trajectory, 'num_points') else 0)),
+                    'trajectory_source': getattr(trajectory, 'source', ''),
+                    'scenario_name': getattr(trajectory, 'scenario_name', ''),
+                    'algorithm_params': alg_params.to_dict() if alg_params is not None else {},
+                }
+            except Exception:
+                run_config = None
+
+        if run_config is not None:
+            try:
+                fd, tmp = tempfile.mkstemp(prefix='pipeline_run_config_', suffix='.mat')
+                os.close(fd)
+                # savemat 不支持 None: 递归剔除 (rho_schedule=None 等),
+                # 否则注入失败后 MATLAB 侧会退回旧架构兜底 (core/ 已归档, 必崩)
+                matdict = {'PIPELINE_CONFIG': _sanitize_for_matlab(run_config)}
+                savemat(tmp, matdict, do_compression=False)
+                try:
+                    self.eng.load(tmp, nargout=0)
+                except Exception:
+                    # fallback to eval load if needed
+                    tmp_fwd = tmp.replace('\\', '/')
+                    self.eng.eval(f"load('{tmp_fwd}')", nargout=0)
+            except Exception as e:
+                if verbose:
+                    print(f'[matlab_engine] 警告: 未能写入/加载 PIPELINE_CONFIG '
+                          f'到 MATLAB ({e})')
         if verbose:
             print('[matlab_engine] 就绪 (每步函数级调用, '
                   '轨迹/闭环/评估均在 Python 侧)')
@@ -82,6 +158,13 @@ class MatlabAlgorithmBridge:
 
         vel = np.asarray(last_body_velocity, dtype=np.float64).reshape(3, 1)
         st = np.asarray(state, dtype=np.float64).reshape(1, 3)
+        # 逐步 rho 注入 (CLI --rho 序列): 第 k 步取 rho_k 写入 base workspace,
+        # matlab_control_bridge 每步读取覆盖 config.rho; 未传 --rho 时不写,
+        # MATLAB 侧保持各算法默认 rho (不改变基线行为)
+        if params is not None and getattr(params, 'rho_schedule', None):
+            rho_idx = min(int(k) - 1, len(params.rho_schedule) - 1)
+            self.eng.workspace['PIPELINE_RHO'] = float(
+                params.rho_schedule[rho_idx])
         world_velocity, body_velocity, solve_time, iter_num, u_col, log_text = \
             self.eng.matlab_control_bridge(
                 float(k),

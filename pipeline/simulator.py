@@ -103,20 +103,36 @@ def simulate(trajectory: Trajectory, algorithm: str,
             f'不支持算法: {algorithm} (可用: {list(ALGORITHMS)})')
     control_fn = ALGORITHMS[algorithm]
     bridge = None
+    # Ensure params defaulted before possibly using it to initialize MATLAB bridge
+    if params is None:
+        params = AlgorithmParams(K=6)
+
+    # 场景参数覆盖: 轨迹生成器给出的车辆 (轮子) 参数优先 (CLI --vimax/--phidotmax
+    # 的覆盖已写入 trajectory.vehicle; 必须在 MATLAB 桥初始化前生效, 使
+    # run_config 携带覆盖后的约束值; rho_schedule 一并透传, 供逐步 rho 调度)
+    params = AlgorithmParams(
+        K=params.K, dt=params.dt, vehicle=trajectory.vehicle,
+        weights=params.weights, solver=params.solver, max_iter=params.max_iter,
+        rho_schedule=params.rho_schedule)
+
     if control_fn is None:
         if algorithm not in MATLAB_ONLY_ALGORITHMS:
             raise ValueError(
                 f'算法 {algorithm} 注册表项为空且非 MATLAB 算法, 请检查 ALGORITHMS')
         from pipeline.matlab_algorithm import MatlabAlgorithmBridge
-        bridge = MatlabAlgorithmBridge(algorithm, trajectory, verbose=verbose)
+        # 将完整 run config 传给 MATLAB 桥，使 MATLAB 端可使用与 Python 一致的参数
+        run_config = {
+            'seed_id': int(trajectory.seed_id),
+            'algorithm': algorithm,
+            'K': int(params.K),
+            'dt': float(params.dt),
+            'num_steps': int(trajectory.num_steps),
+            'trajectory_source': trajectory.source,
+            'scenario_name': trajectory.scenario_name,
+            'algorithm_params': params.to_dict(),
+        }
+        bridge = MatlabAlgorithmBridge(algorithm, trajectory, verbose=verbose, K=params.K, run_config=run_config)
         control_fn = bridge.control
-
-    if params is None:
-        params = AlgorithmParams(K=6)
-    # 场景参数覆盖: 轨迹生成器给出的车辆 (轮子) 参数优先
-    params = AlgorithmParams(
-        K=params.K, dt=params.dt, vehicle=trajectory.vehicle,
-        weights=params.weights, solver=params.solver, max_iter=params.max_iter)
 
     dt = float(params.dt)
     num_steps = int(trajectory.num_steps)

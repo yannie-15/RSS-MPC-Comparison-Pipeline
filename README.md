@@ -33,16 +33,6 @@ RSS-MPC-Comparison-Pipeline-rss_hpipm/
 │   ├── RSS_active_set/                  # active-set 算法 (fmincon SQP, 普通目录, 原 submodule 已并入)
 │   └── .gitattributes
 │
-├── core/                                # MATLAB 仿真核心工具 (pipeline 桥/批量仿真共用)
-│   ├── defaultConfig.m                  # 默认参数
-│   ├── generateReference.m              # Bernstein 多项式参考轨迹
-│   ├── propagateState.m                 # 状态传播
-│   ├── computeWheelOutputs.m            # 轮速 / 轮角计算
-│   └── computeMetrics.m                 # RMSE / J / 求解时间 / 约束违反率
-│
-├── batch_simulation/                    # 场景库生成 (MATLAB)
-│   └── scenario_bank.m / scenario_generator.m # 场景库与采样 (pipeline 桥 seed>=1 时读取)
-│
 ├── others/                              # 与 pipeline 主干无关的批量/复现/校验内容
 │   ├── setup_paths.m                    # 路径设置 (含算法目录检查)
 │   ├── batch_simulation/                # MATLAB 批量仿真 (多 seed 随机场景)
@@ -64,19 +54,22 @@ RSS-MPC-Comparison-Pipeline-rss_hpipm/
 │
 ├── scenario_bank/                       # 场景库 (scenario_seed{1..150}.mat, 运行时生成)
 │
-└── third_party/                         # 第三方求解器源码
-    ├── blasfeo/                         # BLASFEO 线性代数库 (submodule)
-    └── hpipm/                           # HPIPM QP/QCQP 求解器
+├── third_party/                         # 第三方求解器源码
+│   ├── blasfeo/                         # BLASFEO 线性代数库 (submodule)
+│   └── hpipm/                           # HPIPM QP/QCQP 求解器
+│
+├── README.md                            # 本文件
+└── RSS_proposed_算法详解.md             # proposed 算法推导与实现说明
 ```
 
 ## 算法说明
 
 | 算法 | 求解器 | 来源 | 特点 |
 |---|---|---|---|
-| proposed-3iter | HPIPM (OCP QCQP + SCP) | RSS_proposed/ (纯 Python) | 原生凸二次约束 + SCP 迭代, K=6; Dense QCQP golden oracle 同目录 |
-| e-lmpc | fmincon SQP | RSS_sqp/ (普通目录) | MaxIter=1, K=6 |
-| interior-point | fmincon interior-point | RSS_fmincon/ (普通目录) | K=6 |
-| active-set | fmincon active-set | RSS_active_set/ (普通目录) | K=6 |
+| proposed-3iter | HPIPM (OCP QCQP + SCP) | RSS_proposed/ (纯 Python) | 原生凸二次约束 + SCP 迭代，默认 K=6，支持 `--K` 指定；Dense QCQP golden oracle 同目录 |
+| e-lmpc | fmincon SQP | RSS_sqp/ (普通目录) | MaxIter=1，预测时域 K 可通过 `--K` 或 `config.K` 配置 |
+| interior-point | fmincon interior-point | RSS_fmincon/ (普通目录) | 预测时域 K 可通过 `--K` 或 `config.K` 配置 |
+| active-set | fmincon active-set | RSS_active_set/ (普通目录) | 预测时域 K 可通过 `--K` 或 `config.K` 配置 |
 
 > MATLAB 三算法逐步日志统一口径：`exitflag` 为 fmincon 原生码（正值 1~5 均为收敛，仅判据不同；0=达迭代上限；负值=失败），另打印 `status = sign(exitflag)`（1=收敛 / 0=达 MaxIterations / -1=失败）。e-lmpc 为 "1 iteration edition" 设计（每步单次 SQP 迭代），其 status=0 属预期而非失败。
 
@@ -117,6 +110,14 @@ python pipeline/main.py --seed 0 --algorithm e-lmpc --K 6
 python pipeline/main.py --seed 1 --algorithm active-set --K 6
 python pipeline/main.py --seed 0 --algorithm interior-point --K 6
 
+# 覆盖约束值 (vimax 轮速上限 m/s / phidotmax 转向速率上限 rad/s; 默认用场景值)
+python pipeline/main.py --seed 0 --algorithm proposed-3iter --K 6 --vimax 8 --phidotmax 10
+
+# 控制正则化 rho: 单值 (常数) 或逗号分隔逐步序列 (第 k 步取第 k 个值,
+# 序列短于总步数时保持末值; 如 1,0 = 第 1 步 rho=1, 之后 rho=0)
+python pipeline/main.py --seed 0 --algorithm proposed-3iter --K 6 --rho 1,0
+python pipeline/main.py --seed 0 --algorithm proposed-3iter --K 6 --rho 0.05
+
 # 模块方式启动
 python -m pipeline.main --seed 0 --algorithm proposed-3iter --K 6
 ```
@@ -125,8 +126,11 @@ python -m pipeline.main --seed 0 --algorithm proposed-3iter --K 6
 |------|------|--------|
 | `--seed` | 场景 seed_id (0=paper_fixed 固定场景, >=1=scenario_bank) | `0` |
 | `--algorithm` | 算法名, 4 选 1: `proposed-3iter` / `e-lmpc` / `active-set` / `interior-point`。后三者经 MATLAB Engine 每步求解 | `proposed-3iter` |
-| `--K` | MPC 预测时域步长 (仅 proposed-3iter 生效; MATLAB 算法硬编码 6) | `6` |
+| `--K` | MPC 预测时域步长 (所有算法均可指定，默认 `6`) | `6` |
 | `--iters` | proposed 的 SCP 外层迭代数 (每步 HPIPM 求解次数)。默认 3 = 论文基准；非 3 时结果目录名带 `_iters{N}` 后缀 | `3` |
+| `--vimax` | 覆盖最大轮速约束 vimax (m/s)，4 算法统一生效；不传用场景值 (seed=0 为论文基准 5)。结果目录名带 `_vimax{N}` 后缀 | 场景值 |
+| `--phidotmax` | 覆盖最大转向角速率约束 phidotmax (rad/s)，4 算法统一生效；不传用场景值 (seed=0 为论文基准 5π)。结果目录名带 `_phidot{N}` 后缀 | 场景值 |
+| `--rho` | 控制正则化 rho：单值 (如 `0.01`) 或逗号分隔逐步序列 (如 `1,0` = 第 1 步 rho=1 之后 rho=0)，序列短于总步数时保持末值。真正生效于 proposed-3iter 的 RSS 锚点正则化 (论文式 17)；3 个 fmincon 基线算法的 rho 为目标函数签名中的遗留参数 (未参与代价)，传入仅贯通管路、不改变其基线结果。结果目录名带 `_rho...` 后缀 | 各算法默认 |
 | `--out` | 结果输出根目录 | `results/pipeline` |
 | `--quiet` | 关闭算法 per-iteration 打印 | 关闭 |
 
@@ -163,25 +167,41 @@ simulator.py (原始动力学闭环, 按步长 K 循环调用算法 A)
         │  algorithms/RSS_proposed/construct_ocp_qcqp.py (OCP QCQP 矩阵)
         │      ▼
         │  algorithms/RSS_proposed/hpipm_qp_solver.py → third_party/hpipm DLL
-        │      │ u* 返回 simulator → 推进状态, 逐步记录
+        │      │ u* 返回 simulator (状态推进见下方 dynamics.py)
         │
-        └─ A ∈ {e-lmpc, active-set, interior-point} (MATLAB Engine 每步求解)
+        └─ A ∈ {e-lmpc, active-set, interior-point} (MATLAB 算法, 每步借 MATLAB 求解)
                ▼
-           pipeline/matlab_algorithm.py (MatlabAlgorithmBridge)
-           (常驻 MATLAB Engine 会话, 启动一次 ~30s; 每步仅函数级调用,
-            轨迹等大数组经 base workspace 一次性传入)
+           pipeline/matlab_algorithm.py —— Python 侧的"传话人"
+           (仿真开始时把 MATLAB 启动一次, 约 30 秒, 之后一直开着不重复启动;
+            参考轨迹、K、车辆和权重参数也在开头一次性交给 MATLAB 存好,
+            每步只传"当前是第几步、现在的速度和位置"这几个数)
                ▼
-           pipeline/matlab_control_bridge.m
-           (persistent 一次性初始化: addpath core/ + batch_simulation/,
-            组装 config: seed=0 → defaultConfig; seed>=1 → scenario_bank;
-            e-lmpc/active-set 写临时 config.m 覆盖算法目录 config())
+           pipeline/matlab_control_bridge.m —— MATLAB 侧的"接应"
+           (第一步被调用时, 把 Python 传来的参数整理成算法认识的 config
+            结构体, 之后每步直接复用; 参数怎么交给算法, 取决于算法的
+            函数签名: interior-point / active-set 的第 5 个参数就是
+            config, 直接递进去; e-lmpc 的签名不收参数, 它内部自己调
+            config() 从文件里读, 所以接应把整理好的参数写进一个临时
+            config.m 放到路径最前面"顶替"原文件)
                ▼
            algorithms/{RSS_sqp | RSS_fmincon | RSS_active_set}/control_RSS.m
-           (fmincon 求解, 逐步打印 exitflag+status)
+           (真正干活的算法: 用 fmincon 求解这一步的最优控制, 解完打印
+            一行 exitflag+status 方便排查收敛情况)
                ▼
-           u/世界速度/车体速度 回传 Python → 推进状态, 逐步记录
+           解出的控制量/速度传回 Python
         │
-        ▼
+        ▼  (两条分支在此汇合: 算法解出的控制量都交回仿真器)
+dynamics.py —— 机器人的"真身", 按原始动力学推进一步
+ (propagate_state: 用世界速度把位姿 [x;y;ψ] 前推一个 dt, 不做任何
+  线性化——算法内部的近似模型只管算控制量, 机器人按真模型动,
+  两者的差距才是真实跟踪误差; compute_wheel_outputs 顺带算出
+  各轮速度/转向角, 记录下来供画图)
+        │
+        │  步数没走完 且 没有失败 (step_failed/异常)?
+        │      是 ──► 回到上面的"仿真器每步调用算法"处, 带着
+        │             新位姿和新速度走第 k+1 步 (就这样闭环转满
+        │             num_steps 圈; seed=0 是 100 步)
+        ▼ 否
 统一 SimResult (两条路径同构)
         │
    ┌────┼─────────┐
@@ -204,8 +224,8 @@ metrics.py  plotting.py  结果三件套落盘
 | proposed 控制器 | `algorithms/RSS_proposed/control_rss_ocpqcqp.py` | RSS 控制律：SCP 外层循环 `--iters` 次（默认 3），每次构造并求解凸 QCQP 子问题，失败时保留最近可行 incumbent | `simulator.py` | `construct_ocp_qcqp` |
 | QCQP 构造 | `algorithms/RSS_proposed/construct_ocp_qcqp.py` | RSS 模型 → OCP QCQP 矩阵（A/B/Bb/Q/R/S/q/r/Qq/Sq/Rq/qq/rq/uq），转向锥/轮速 SOC 以原生二次约束给出 | `control_rss_ocpqcqp.py` | `hpipm_qp_solver` |
 | HPIPM 接口 | `algorithms/RSS_proposed/hpipm_qp_solver.py` | ctypes 封装，加载 `third_party/hpipm/lib/libhpipm.dll`，调 `ocp_qcqp` IPM 求解器 | `construct_ocp_qcqp.py` | HPIPM/BLASFEO DLL |
-| MATLAB Engine 桥 | `pipeline/matlab_algorithm.py` | `MatlabAlgorithmBridge`：启动常驻 MATLAB Engine 会话（一次），轨迹/算法/seed 经 base workspace 一次性传入；每步 `control()` 调 `matlab_control_bridge` 求解并回传，签名与 `control_rss_ocpqcqp` 统一 | `simulator.py` | `matlab_control_bridge.m` |
-| MATLAB 侧求解桥 | `pipeline/matlab_control_bridge.m` | persistent 一次性初始化（addpath core/ + batch_simulation/，组装 config：seed=0 → defaultConfig；seed≥1 → scenario_bank；e-lmpc/active-set 写临时 config.m 覆盖算法目录 config()）；每步按算法分发 `control_RSS`，evalc 捕获 exitflag/status 日志回传 | `matlab_algorithm.py` | 算法目录 `control_RSS.m` |
+| MATLAB Engine 桥 | `pipeline/matlab_algorithm.py` | `MatlabAlgorithmBridge`：启动常驻 MATLAB Engine 会话（一次）；轨迹/算法/seed 经 base workspace 传入，完整 run_config（K/dt/车辆/权重）写临时 .mat 加载为 `PIPELINE_CONFIG`，K 另写 `PIPELINE_K`；每步 `control()` 调 `matlab_control_bridge` 求解并回传，签名与 `control_rss_ocpqcqp` 统一 | `simulator.py` | `matlab_control_bridge.m` |
+| MATLAB 侧求解桥 | `pipeline/matlab_control_bridge.m` | persistent 一次性初始化（从 `PIPELINE_CONFIG` 重建算法 config 结构体：车辆几何→Lx/Ly/wheel_pos/vimax/phidotmax、权重→k1/k2/k3/eps、dt/num_steps/K，`PIPELINE_K` 覆盖预测时域，保证与 Python 侧参数一致）；e-lmpc/active-set 写临时 config.m 覆盖算法目录 config()，interior-point 直接传 config 第 5 参；每步按算法分发 `control_RSS`，evalc 捕获 exitflag/status 日志回传 | `matlab_algorithm.py` | 算法目录 `control_RSS.m` |
 | 单 case 仿真 | `others/batch_simulation/run_one_case.m` | MATLAB 版闭环（批量仿真用）：按算法名 addpath 对应算法目录并临时覆盖 config，循环调用 `control_RSS.m`，原始动力学推进 | `others/batch_simulation/main.m` | 算法目录 `control_RSS.m` |
 | 对比算法 | `algorithms/{RSS_sqp,RSS_fmincon,RSS_active_set}/control_RSS.m` | fmincon 系 NLP 求解（SQP / interior-point / active-set），统一 exitflag+status 日志口径 | `matlab_control_bridge.m` / `run_one_case.m` | fmincon |
 | 评估 | `pipeline/metrics.py` | RMSE / J_total 与 J 分解 / medianSolveTime（排除 warm-up，论文 P1-4 口径）/ 约束违反量 / 成功率 | `main.py` | — |

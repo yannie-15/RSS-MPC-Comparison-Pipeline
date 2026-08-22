@@ -1,0 +1,2 @@
+seed,algorithm,success,rmse,trajectoryCost,meanSolveTime,maxSolveTime,totalSolveTime,wheelSpeedViolationRatio,maxWheelSpeedViolation,steeringRateViolationRatio,maxSteeringRateViolation,successRate,elapsedTime
+1,proposed-3iter,1,0.0215284728340468,9.78902541584015,0.0022499082417578,0.0051724999993894,0.40948329999992,0,0,0,0,1,37.3350407

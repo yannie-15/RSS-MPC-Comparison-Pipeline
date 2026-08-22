@@ -3,6 +3,8 @@
 用法:
     python pipeline/main.py --seed 0 --algorithm proposed-3iter --K 6
     python pipeline/main.py --seed 0 --algorithm proposed-3iter --K 6 --iters 5
+    python pipeline/main.py --seed 0 --algorithm proposed-3iter --K 6 --rho 1,0
+    python pipeline/main.py --seed 0 --algorithm proposed-3iter --K 6 --vimax 8
     python pipeline/main.py --seed 0 --algorithm e-lmpc --K 6        (MATLAB Engine)
     python -m pipeline.main --seed 0 --algorithm proposed-3iter --K 6
 
@@ -41,18 +43,38 @@ from pathlib import Path
 if __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pipeline.params import DT, AlgorithmParams, RunConfig
+from pipeline.params import DT, AlgorithmParams, CostWeights, RunConfig
 from pipeline.trajectory_generator import make_trajectory
 from pipeline.simulator import simulate, ALGORITHMS, MATLAB_ONLY_ALGORITHMS
 from pipeline.metrics import compute_metrics
 from pipeline.plotting import plot_results
 
 
+def _parse_rho(text: str) -> list:
+    """解析 --rho: 单值 '0.01' -> [0.01]; 逐步序列 '1,0' -> [1.0, 0.0]."""
+    parts = [p.strip() for p in str(text).split(',') if p.strip() != '']
+    if not parts:
+        raise argparse.ArgumentTypeError('--rho 不能为空')
+    try:
+        vals = [float(p) for p in parts]
+    except ValueError:
+        raise argparse.ArgumentTypeError(f'--rho 数值无法解析: {text}')
+    if any(v < 0 for v in vals):
+        raise argparse.ArgumentTypeError('--rho 需为非负数')
+    return vals
+
+
 def run(seed_id: int, algorithm: str, K: int, iters: int = 3,
-        out_root=None, verbose: bool = True) -> dict:
+        out_root=None, verbose: bool = True,
+        vimax: float = None, phidotmax: float = None,
+        rho: list = None) -> dict:
     """单次完整 pipeline 运行, 返回 {'run_dir', 'metrics', 'success', ...}.
 
     iters: proposed 算法的 SCP 外层迭代数 (每步 HPIPM 求解次数), 默认 3.
+    vimax/phidotmax: 覆盖约束值 (轮速上限 m/s / 转向速率上限 rad/s);
+        默认 None = 用场景值 (seed=0 即论文基准 5 / 5π).
+    rho: 控制正则化 rho 序列; None = 各算法默认值, [v] = 常数,
+        [v1,v2,...] = 第 k 步取 v_k (序列短于总步数时保持末值).
     """
     algorithm = algorithm.lower()
     is_matlab_algo = algorithm in MATLAB_ONLY_ALGORITHMS
@@ -63,6 +85,12 @@ def run(seed_id: int, algorithm: str, K: int, iters: int = 3,
     run_name = f'seed{seed_id}_K{K}'
     if iters != 3 and not is_matlab_algo:
         run_name += f'_iters{iters}'
+    if vimax is not None:
+        run_name += f'_vimax{vimax:g}'
+    if phidotmax is not None:
+        run_name += f'_phidot{phidotmax:g}'
+    if rho:
+        run_name += '_rho' + '_'.join(f'{v:g}' for v in rho)
     run_dir = out_root / algorithm / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -70,16 +98,28 @@ def run(seed_id: int, algorithm: str, K: int, iters: int = 3,
 
     # ============ 统一 Python 主干 (4 算法) ============
     if is_matlab_algo:
-        if K != 6:
-            print(f'警告: {algorithm} 为 MATLAB 算法, 预测时域硬编码 '
-                  f'K=6, --K {K} 被忽略')
         if iters != 3:
             print(f'警告: --iters 仅对 proposed-3iter 生效, {algorithm} 忽略')
 
     # 1. 轨迹生成 (K 与 seed_id 传入, 4 算法同源)
     trajectory = make_trajectory(seed_id, K, DT)
+    # 1.1 约束值覆盖 (vimax/phidotmax; 默认用场景值)
+    if vimax is not None:
+        trajectory.vehicle.vimax = float(vimax)
+    if phidotmax is not None:
+        trajectory.vehicle.phidotmax = float(phidotmax)
     # 2. 闭环仿真 (轨迹 + 算法 + 参数 传入仿真器; MATLAB 算法经 Engine 桥每步求解)
-    params = AlgorithmParams(K=K, dt=DT, max_iter=iters)
+    # rho: 显式传入时 4 算法统一生效 (MATLAB 侧经 PIPELINE_RHO 注入);
+    # vehicle 用 (可能被 --vimax/--phidotmax 覆盖后的) 场景车辆参数,
+    # 保证 compute_metrics/plotting 的约束口径与闭环一致
+    weights = CostWeights()
+    rho_schedule = None
+    if rho:
+        rho_schedule = [float(v) for v in rho]
+        weights = CostWeights(rho=rho_schedule[0])
+    params = AlgorithmParams(K=K, dt=DT, max_iter=iters,
+                             weights=weights, rho_schedule=rho_schedule,
+                             vehicle=trajectory.vehicle)
     result = simulate(trajectory, algorithm, params, verbose=verbose)
     traj_num_steps = trajectory.num_steps
     traj_source = trajectory.source
@@ -179,12 +219,22 @@ def main(argv=None):
                         choices=sorted(ALGORITHMS.keys()),
                         help='算法名 (4 选 1); proposed-3iter 为纯 Python, '
                              'e-lmpc/active-set/interior-point 经 MATLAB Engine '
-                             '每步求解 (需 matlabengine 包 + MATLAB 在 PATH, K 固定 6)')
+                             '每步求解 (需 matlabengine 包 + MATLAB 在 PATH)')
     parser.add_argument('--K', type=int, default=6,
                         help='MPC 预测时域步长 K (默认 6, 论文 IV-A)')
     parser.add_argument('--iters', type=int, default=3,
                         help='proposed 算法 SCP 外层迭代数 (每步 HPIPM 求解次数, '
                              '默认 3 = 论文基准 proposed-3iter)')
+    parser.add_argument('--vimax', type=float, default=None,
+                        help='覆盖最大轮速约束 vimax (m/s); 默认用场景值 '
+                             '(seed=0 为论文基准 5)')
+    parser.add_argument('--phidotmax', type=float, default=None,
+                        help='覆盖最大转向角速率约束 phidotmax (rad/s); '
+                             '默认用场景值 (seed=0 为论文基准 5π)')
+    parser.add_argument('--rho', type=_parse_rho, default=None,
+                        help='控制正则化 rho, 4 算法统一生效: 单值 (如 0.01) '
+                             '或逗号分隔逐步序列 (如 1,0 = 第1步 rho=1 之后 rho=0); '
+                             '序列短于总步数时保持末值; 不传则各算法用默认值')
     parser.add_argument('--out', default=None,
                         help='结果输出根目录 (默认 results/pipeline)')
     parser.add_argument('--quiet', action='store_true',
@@ -193,7 +243,8 @@ def main(argv=None):
 
     # dt (tau) 写死为 0.01 s, 不作为命令行参数
     run(args.seed, args.algorithm, args.K, iters=args.iters,
-        out_root=args.out, verbose=not args.quiet)
+        out_root=args.out, verbose=not args.quiet,
+        vimax=args.vimax, phidotmax=args.phidotmax, rho=args.rho)
 
 
 if __name__ == '__main__':

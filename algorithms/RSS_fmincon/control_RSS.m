@@ -1,7 +1,18 @@
 function [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state, params)
     % ================= Param Setup =================
-    K = 6;               % 预测时域
-    rho = 0;          % 正则化权重
+    if isfield(params, 'K') && ~isempty(params.K)
+        K = params.K;
+    else
+        K = 6;
+    end
+    % 预测时域
+    % 正则化权重 rho: 优先取 pipeline 注入 (--rho 逐步序列经 params.rho),
+    % 未注入时保持原默认 0
+    if isfield(params, 'rho') && ~isempty(params.rho)
+        rho = params.rho;
+    else
+        rho = 0;
+    end
     k1 = 1;              % 朝向跟踪权重
     solve_time = 0;      % 初始化优化耗时
     iter_num = 0;        % 每步迭代次数
