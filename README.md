@@ -28,9 +28,9 @@ RSS-MPC-Comparison-Pipeline-rss_hpipm/
 │   │   ├── construct_complete_qp_from_rss.m #   Dense QCQP 矩阵构造 (golden oracle)
 │   │   ├── config.m                     #   算法参数
 │   │   └── build_hpipm_windows.sh       #   Windows MSYS2 编译脚本
-│   ├── RSS_sqp/                         # → github.com/serendipitjx/RSS_sqp (submodule, main)
-│   ├── RSS_fmincon/                     # → github.com/serendipitjx/RSS_fmincon (submodule, main)
-│   ├── RSS_active_set/                  # → github.com/serendipitjx/RSS_fmincon (submodule, active-set 分支)
+│   ├── RSS_sqp/                         # e-lmpc 算法 (fmincon SQP, 普通目录, 原 submodule 已并入)
+│   ├── RSS_fmincon/                     # interior-point 算法 (fmincon IPM, 普通目录, 原 submodule 已并入)
+│   ├── RSS_active_set/                  # active-set 算法 (fmincon SQP, 普通目录, 原 submodule 已并入)
 │   └── .gitattributes
 │
 ├── core/                                # MATLAB 仿真核心工具 (pipeline 桥/批量仿真共用)
@@ -44,10 +44,10 @@ RSS-MPC-Comparison-Pipeline-rss_hpipm/
 │   └── scenario_bank.m / scenario_generator.m # 场景库与采样 (pipeline 桥 seed>=1 时读取)
 │
 ├── others/                              # 与 pipeline 主干无关的批量/复现/校验内容
-│   ├── setup_paths.m                    # 路径设置 (含 submodule 检查)
+│   ├── setup_paths.m                    # 路径设置 (含算法目录检查)
 │   ├── batch_simulation/                # MATLAB 批量仿真 (多 seed 随机场景)
 │   │   ├── main.m / main.py             # 批量入口 (MATLAB / Python)
-│   │   ├── run_one_case.m               # 单场景闭环仿真, 按算法名分发到 submodule
+│   │   ├── run_one_case.m               # 单场景闭环仿真, 按算法名分发到算法目录
 │   │   ├── run_batch_simulation.m       # (seed × algorithm) 批量仿真循环
 │   │   ├── comparison_init.m / _load.m / _save.m  # comparison 结构体管理
 │   │   ├── plot_one_algorithm.m         # 单算法 summary 图
@@ -74,9 +74,9 @@ RSS-MPC-Comparison-Pipeline-rss_hpipm/
 | 算法 | 求解器 | 来源 | 特点 |
 |---|---|---|---|
 | proposed-3iter | HPIPM (OCP QCQP + SCP) | RSS_proposed/ (纯 Python) | 原生凸二次约束 + SCP 迭代, K=6; Dense QCQP golden oracle 同目录 |
-| e-lmpc | fmincon SQP | RSS_sqp (submodule) | MaxIter=1, K=6 |
-| interior-point | fmincon interior-point | RSS_fmincon (submodule) | K=6 |
-| active-set | fmincon active-set | RSS_active_set (submodule) | K=6 |
+| e-lmpc | fmincon SQP | RSS_sqp/ (普通目录) | MaxIter=1, K=6 |
+| interior-point | fmincon interior-point | RSS_fmincon/ (普通目录) | K=6 |
+| active-set | fmincon active-set | RSS_active_set/ (普通目录) | K=6 |
 
 > MATLAB 三算法逐步日志统一口径：`exitflag` 为 fmincon 原生码（正值 1~5 均为收敛，仅判据不同；0=达迭代上限；负值=失败），另打印 `status = sign(exitflag)`（1=收敛 / 0=达 MaxIterations / -1=失败）。e-lmpc 为 "1 iteration edition" 设计（每步单次 SQP 迭代），其 status=0 属预期而非失败。
 
@@ -137,7 +137,7 @@ python -m pipeline.main --seed 0 --algorithm proposed-3iter --K 6
 3. **`figures/*.png`** — 画图 (轨迹 / 跟踪误差 / 轮速 / 转向速率 / 求解时长 / 控制输入)
 4. **`simulation_data.npz`** — 原始数组 (复画图 / golden 对比用)
 
-环境要求：proposed-3iter 需 HPIPM DLL（Windows 编译脚本 `algorithms/RSS_proposed/build_hpipm_windows.sh`）；MATLAB 算法需 `matlabengine` 包（版本须与 MATLAB 发行版匹配，安装见 `pipeline/matlab_algorithm.py` 模块注释）+ MATLAB 在 PATH。clone 后先执行 `git submodule update --init --recursive`。
+环境要求：proposed-3iter 需 HPIPM DLL（Windows 编译脚本 `algorithms/RSS_proposed/build_hpipm_windows.sh`，构建依赖 `third_party/blasfeo` submodule，clone 后执行 `git submodule update --init third_party/blasfeo`）；MATLAB 算法需 `matlabengine` 包（版本须与 MATLAB 发行版匹配，安装见 `pipeline/matlab_algorithm.py` 模块注释）+ MATLAB 在 PATH。三个算法目录（RSS_sqp/RSS_fmincon/RSS_active_set）已作为普通目录并入主仓库，clone 即得，无需 submodule 操作。
 
 ## 各板块调用逻辑与流程图
 
@@ -174,7 +174,7 @@ simulator.py (原始动力学闭环, 按步长 K 循环调用算法 A)
            pipeline/matlab_control_bridge.m
            (persistent 一次性初始化: addpath core/ + batch_simulation/,
             组装 config: seed=0 → defaultConfig; seed>=1 → scenario_bank;
-            e-lmpc/active-set 写临时 config.m 覆盖 submodule config())
+            e-lmpc/active-set 写临时 config.m 覆盖算法目录 config())
                ▼
            algorithms/{RSS_sqp | RSS_fmincon | RSS_active_set}/control_RSS.m
            (fmincon 求解, 逐步打印 exitflag+status)
@@ -190,7 +190,7 @@ metrics.py  plotting.py  结果三件套落盘
 (RMSE/J/耗时) (6 张图) (run_config.json / metrics.json / figures/ / npz)
 ```
 
-> 说明：仿真器对 4 种算法一视同仁（同一条"循环调用算法"主干）：轨迹生成、参数配置、原始动力学闭环推进、评估与画图全部在 Python 侧；MATLAB 系算法仅在每步求解时经 MATLAB Engine 调用 submodule 的 `control_RSS.m`（引擎会话随仿真开启/关闭，启动一次约 30s，之后每步毫秒级调用）。
+> 说明：仿真器对 4 种算法一视同仁（同一条"循环调用算法"主干）：轨迹生成、参数配置、原始动力学闭环推进、评估与画图全部在 Python 侧；MATLAB 系算法仅在每步求解时经 MATLAB Engine 调用算法目录的 `control_RSS.m`（引擎会话随仿真开启/关闭，启动一次约 30s，之后每步毫秒级调用）。
 
 ### 各板块调用逻辑
 
@@ -205,8 +205,8 @@ metrics.py  plotting.py  结果三件套落盘
 | QCQP 构造 | `algorithms/RSS_proposed/construct_ocp_qcqp.py` | RSS 模型 → OCP QCQP 矩阵（A/B/Bb/Q/R/S/q/r/Qq/Sq/Rq/qq/rq/uq），转向锥/轮速 SOC 以原生二次约束给出 | `control_rss_ocpqcqp.py` | `hpipm_qp_solver` |
 | HPIPM 接口 | `algorithms/RSS_proposed/hpipm_qp_solver.py` | ctypes 封装，加载 `third_party/hpipm/lib/libhpipm.dll`，调 `ocp_qcqp` IPM 求解器 | `construct_ocp_qcqp.py` | HPIPM/BLASFEO DLL |
 | MATLAB Engine 桥 | `pipeline/matlab_algorithm.py` | `MatlabAlgorithmBridge`：启动常驻 MATLAB Engine 会话（一次），轨迹/算法/seed 经 base workspace 一次性传入；每步 `control()` 调 `matlab_control_bridge` 求解并回传，签名与 `control_rss_ocpqcqp` 统一 | `simulator.py` | `matlab_control_bridge.m` |
-| MATLAB 侧求解桥 | `pipeline/matlab_control_bridge.m` | persistent 一次性初始化（addpath core/ + batch_simulation/，组装 config：seed=0 → defaultConfig；seed≥1 → scenario_bank；e-lmpc/active-set 写临时 config.m 覆盖 submodule config()）；每步按算法分发 `control_RSS`，evalc 捕获 exitflag/status 日志回传 | `matlab_algorithm.py` | submodule `control_RSS.m` |
-| 单 case 仿真 | `others/batch_simulation/run_one_case.m` | MATLAB 版闭环（批量仿真用）：按算法名 addpath 对应 submodule 目录并临时覆盖 config，循环调用 `control_RSS.m`，原始动力学推进 | `others/batch_simulation/main.m` | submodule `control_RSS.m` |
+| MATLAB 侧求解桥 | `pipeline/matlab_control_bridge.m` | persistent 一次性初始化（addpath core/ + batch_simulation/，组装 config：seed=0 → defaultConfig；seed≥1 → scenario_bank；e-lmpc/active-set 写临时 config.m 覆盖算法目录 config()）；每步按算法分发 `control_RSS`，evalc 捕获 exitflag/status 日志回传 | `matlab_algorithm.py` | 算法目录 `control_RSS.m` |
+| 单 case 仿真 | `others/batch_simulation/run_one_case.m` | MATLAB 版闭环（批量仿真用）：按算法名 addpath 对应算法目录并临时覆盖 config，循环调用 `control_RSS.m`，原始动力学推进 | `others/batch_simulation/main.m` | 算法目录 `control_RSS.m` |
 | 对比算法 | `algorithms/{RSS_sqp,RSS_fmincon,RSS_active_set}/control_RSS.m` | fmincon 系 NLP 求解（SQP / interior-point / active-set），统一 exitflag+status 日志口径 | `matlab_control_bridge.m` / `run_one_case.m` | fmincon |
 | 评估 | `pipeline/metrics.py` | RMSE / J_total 与 J 分解 / medianSolveTime（排除 warm-up，论文 P1-4 口径）/ 约束违反量 / 成功率 | `main.py` | — |
 | 画图 | `pipeline/plotting.py` | 6 张图：轨迹跟踪 / 跟踪误差 / 轮速（含约束线）/ 转向速率 / 每步求解时长 / 控制输入 | `main.py` | — |

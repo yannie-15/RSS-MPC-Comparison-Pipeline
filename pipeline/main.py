@@ -12,7 +12,7 @@
       -> 闭环仿真: simulate (.py, 原始动力学循环调用算法)
            proposed-3iter             -> algorithms/RSS_proposed/control_rss_ocpqcqp.py
            e-lmpc/active-set/interior-point -> matlab_algorithm.py
-             (常驻 MATLAB Engine 会话, 每步调 submodule control_RSS 求解)
+             (常驻 MATLAB Engine 会话, 每步调算法目录的 control_RSS 求解)
       -> compute_metrics(result, params)           评估 (含求解时长统计)
       -> 落盘结果:
            run_config.json    1) 记录传入参数 (seed_id/算法/K/iters/dt/场景/权重/求解器)
@@ -25,9 +25,10 @@
                       algorithms/RSS_proposed/), --iters 可指定
                       SCP 外层迭代次数 (默认 3 = 论文基准 proposed-3iter)
     e-lmpc / active-set / interior-point
-                      MATLAB submodule 算法 (fmincon 系), 经 MATLAB Engine
+                      MATLAB 算法 (fmincon 系, 实现在 algorithms/ 算法目录,
+                      原 submodule 已并入主仓库), 经 MATLAB Engine
                       每步求解 (需 matlabengine 包 + MATLAB 在 PATH);
-                      K 由 submodule 硬编码为 6, --iters 对其无效
+                      K 由算法硬编码为 6, --iters 对其无效
 """
 
 import argparse
@@ -70,7 +71,7 @@ def run(seed_id: int, algorithm: str, K: int, iters: int = 3,
     # ============ 统一 Python 主干 (4 算法) ============
     if is_matlab_algo:
         if K != 6:
-            print(f'警告: {algorithm} 为 MATLAB submodule 算法, 预测时域硬编码 '
+            print(f'警告: {algorithm} 为 MATLAB 算法, 预测时域硬编码 '
                   f'K=6, --K {K} 被忽略')
         if iters != 3:
             print(f'警告: --iters 仅对 proposed-3iter 生效, {algorithm} 忽略')

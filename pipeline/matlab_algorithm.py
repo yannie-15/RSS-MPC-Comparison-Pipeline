@@ -27,7 +27,7 @@ MATLAB_BRIDGE_ALGORITHMS = ('e-lmpc', 'interior-point', 'active-set')
 
 
 class MatlabAlgorithmBridge:
-    """MATLAB submodule 算法的每步求解桥 (供 simulator 循环调用)."""
+    """MATLAB 算法的每步求解桥 (供 simulator 循环调用)."""
 
     ALGO_SUBMODULE = {
         'e-lmpc': 'RSS_sqp',

@@ -3,19 +3,20 @@ function summary = run_paper_baseline_case(config, scenario)
 %
 % 与 run_one_case 的区别:
 %   1. 计算 warm-up 排除后的中位数耗时 (P1-4 复现要求)
-%   2. 记录每步 iter_num (submodule 返回的求解器迭代数)
+%   2. 记录每步 iter_num (算法返回的求解器迭代数)
 %   3. 检查解的有限性 (NaN/Inf) 标记失败步
 %   4. 支持全部 4 种算法: proposed-3iter, e-lmpc, active-set, interior-point
 %
-% 算法调用架构 (与 run_one_case 一致):
-%   - proposed-3iter  → algorithms/RSS_proposed/control_RSS.m  (git submodule)
-%   - e-lmpc          → algorithms/RSS_sqp/control_RSS.m       (git submodule)
-%   - interior-point  → algorithms/RSS_fmincon/control_RSS.m   (git submodule)
-%   - active-set      → algorithms/control_active_set.m        (本地实现)
+% 算法调用架构 (与 run_one_case 一致, 四个算法目录均为普通目录):
+%   - proposed-3iter  → algorithms/RSS_proposed/control_RSS_denseqcqp.m (Dense QCQP golden oracle;
+%                       生产实现 OCP QCQP + SCP 在 algorithms/RSS_proposed/ Python)
+%   - e-lmpc          → algorithms/RSS_sqp/control_RSS.m       (普通目录, 原 submodule 已并入)
+%   - interior-point  → algorithms/RSS_fmincon/control_RSS.m   (普通目录, 原 submodule 已并入)
+%   - active-set      → algorithms/RSS_active_set/control_RSS.m (普通目录, 原 submodule 已并入)
 %
-% 注: 每个算法使用各自 submodule 的 config.m 参数 (不使用外部传入的 config 覆盖)。
-%     submodule 接口不返回 exitflag/warmstarted, 相关字段记为 NaN/false。
-%     iter_num 从 submodule 的第 4 个输出获取 (e-lmpc/interior-point)。
+% 注: 每个算法使用各自算法目录的 config.m 参数 (不使用外部传入的 config 覆盖)。
+%     算法接口不返回 exitflag/warmstarted, 相关字段记为 NaN/false。
+%     iter_num 从算法的第 4 个输出获取 (e-lmpc/interior-point)。
 %     RSS_proposed 只输出 new_state_dot, 缺失的 u/solve_time/iter_num 记为 NaN。
 %
 % 输出额外字段:
@@ -42,7 +43,7 @@ function summary = run_paper_baseline_case(config, scenario)
 
     algorithm = lower(config.algorithm);
 
-    % 定位 submodule 路径 (与 run_one_case 一致)
+    % 定位算法目录路径 (与 run_one_case 一致; 均为普通目录)
     script_dir = fileparts(mfilename('fullpath'));       % <repo>/others/paper_reproduction
     workspace_root = fileparts(fileparts(script_dir));   % <repo>
     algorithms_dir = fullfile(workspace_root, 'algorithms');

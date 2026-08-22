@@ -4,9 +4,9 @@ function summary = run_one_case(config, scenario)
 % 算法调用架构:
 %   - proposed-3iter  → algorithms/RSS_proposed/control_RSS_denseqcqp.m (Dense QCQP golden oracle;
 %                       生产实现 OCP QCQP + SCP 在 pipeline/ Python)
-%   - e-lmpc          → algorithms/RSS_sqp/control_RSS.m        (git submodule)
-%   - interior-point  → algorithms/RSS_fmincon/control_RSS.m    (git submodule, main 分支)
-%   - active-set      → algorithms/RSS_active_set/control_RSS.m (git submodule, active-set 分支)
+%   - e-lmpc          → algorithms/RSS_sqp/control_RSS.m        (普通目录, 原 submodule 已并入)
+%   - interior-point  → algorithms/RSS_fmincon/control_RSS.m    (普通目录, 原 submodule 已并入)
+%   - active-set      → algorithms/RSS_active_set/control_RSS.m (普通目录, 原 submodule 已并入)
 %
 % 各算法接口不同, 本函数负责适配:
 %   RSS_proposed:  [u, new_state_dot, velocity, diagnostics] = control_RSS_denseqcqp(path, step, state_dot, state)
@@ -40,7 +40,7 @@ function summary = run_one_case(config, scenario)
 
     algorithm = lower(config.algorithm);
 
-    % 定位 submodule 路径
+    % 定位算法目录路径 (均为普通目录, 原 submodule 已并入主仓库)
     script_dir = fileparts(mfilename('fullpath'));       % <repo>/others/batch_simulation
     workspace_root = fileparts(fileparts(script_dir));   % <repo>
     algorithms_dir = fullfile(workspace_root, 'algorithms');

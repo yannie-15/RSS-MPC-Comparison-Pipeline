@@ -7,7 +7,7 @@ function comparison = paper_reproduction(algorithms)
 %   - active-set
 %   - interior-point
 %
-% 每个算法使用各自 submodule 的 config.m 参数 (不在本脚本中覆盖):
+% 每个算法使用各自算法目录的 config.m 参数 (不在本脚本中覆盖):
 %   - proposed-3iter → algorithms/RSS_proposed/config.m
 %   - e-lmpc         → algorithms/RSS_sqp/config.m
 %   - interior-point → algorithms/RSS_fmincon/config.m
@@ -63,7 +63,7 @@ function comparison = paper_reproduction(algorithms)
     fprintf('========================================\n');
     fprintf('论文 Section IV 固定轨迹实验复现\n');
     fprintf('本次运行算法: %s\n', strjoin(algorithms, ', '));
-    fprintf('(每个算法使用各自 submodule 的 config.m 参数)\n');
+    fprintf('(每个算法使用各自算法目录的 config.m 参数)\n');
     fprintf('========================================\n');
 
     % cfg 仅传递算法名, 实际参数由 run_paper_baseline_case 加载各自 config.m

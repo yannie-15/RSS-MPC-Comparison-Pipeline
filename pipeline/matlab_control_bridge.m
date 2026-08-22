@@ -15,15 +15,16 @@ function [worldVelocity, bodyVelocity, solve_time, iter_num, u_col, log_text] = 
 % 首次调用完成一次性初始化 (persistent, 会话内只执行一次):
 %   - addpath core/ (defaultConfig) + batch_simulation/ (scenario_bank)
 %   - 组装 config: seed=0 -> defaultConfig; seed>=1 -> scenario_bank(seed)
-%   - addpath submodule 目录 (algorithms/RSS_sqp | RSS_fmincon | RSS_active_set)
-%   - e-lmpc / active-set: 写临时 config.m 覆盖 submodule config()
+%   - addpath 算法目录 (algorithms/RSS_sqp | RSS_fmincon | RSS_active_set,
+%     均为随主仓库 checkout 的普通目录, 原 submodule 已并入主仓库)
+%   - e-lmpc / active-set: 写临时 config.m 覆盖算法目录 config()
 %     (二者内部调 config() 取场景参数; interior-point 直接接收 config 第 5 参)
 %
 % 每步: 按算法分发 control_RSS (接口差异与 run_one_case 一致):
 %   e-lmpc:          [wv, bv, st, it] = control_RSS(path, k, vel, state)
 %   interior-point:  [wv, bv, st, it] = control_RSS(path, k, vel, state, config)
 %   active-set:      [wv, bv, st, it] = control_RSS(path, k, vel, state, config)
-% evalc 捕获 submodule 的 exitflag/status 打印, 回传 Python 统一输出。
+% evalc 捕获算法的 exitflag/status 打印, 回传 Python 统一输出。
 
     persistent ready algorithm pass_config config path_ref
     if isempty(ready)
@@ -41,12 +42,12 @@ function [worldVelocity, bodyVelocity, solve_time, iter_num, u_col, log_text] = 
             {'RSS_sqp', 'RSS_fmincon', 'RSS_active_set'});
         if ~isKey(alg_map, algorithm)
             error('matlab_control_bridge:BadAlgorithm', ...
-                '本桥仅服务 MATLAB submodule 算法 (e-lmpc/interior-point/active-set), 收到: %s', algorithm);
+                '本桥仅服务 MATLAB 算法 (e-lmpc/interior-point/active-set), 收到: %s', algorithm);
         end
         submodule_dir = fullfile(repo_root, 'algorithms', alg_map(algorithm));
         if ~exist(fullfile(submodule_dir, 'control_RSS.m'), 'file')
-            error('matlab_control_bridge:MissingSubmodule', ...
-                '缺少 submodule: %s\n请先执行: git submodule update --init --recursive', submodule_dir);
+            error('matlab_control_bridge:MissingAlgorithm', ...
+                '缺少算法目录: %s (普通目录, 请检查仓库完整性)', submodule_dir);
         end
 
         % 组装算法 config (与 others/batch_simulation/run_one_case.m 同源)
@@ -82,12 +83,12 @@ end
 
 
 %% =========================================================
-% 辅助函数: 创建临时 config.m 覆盖 submodule 的 config
+% 辅助函数: 创建临时 config.m 覆盖算法目录的 config
 % (与 others/batch_simulation/run_one_case.m 的同名辅助函数保持一致)
 %% ==========================================================
 
 function override_dir = setup_config_override(cfg)
-%SETUP_CONFIG_OVERRIDE 创建临时 config.m, 用场景 config 覆盖 submodule 的 config
+%SETUP_CONFIG_OVERRIDE 创建临时 config.m, 用场景 config 覆盖算法目录的 config
 %
 % e-lmpc / active-set 的控制器内部调 config() 取参数, 不接收外部 config。
 % 本函数在临时目录写一个 config.m, 返回场景 cfg, 通过 addpath 覆盖。

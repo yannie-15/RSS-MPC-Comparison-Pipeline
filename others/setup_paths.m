@@ -2,9 +2,9 @@
 % 在运行任何仿真脚本前执行此文件
 %
 % 注: 四个算法目录 (algorithms/RSS_proposed, RSS_sqp, RSS_fmincon, RSS_active_set)
+%     均为随主仓库 checkout 的普通目录 (原 submodule 已并入主仓库),
 %     不在此处统一 addpath, 因为它们的 control_RSS.m 和 config.m 同名会冲突。
 %     run_one_case.m / run_paper_baseline_case.m 会在调用时临时 addpath/rmpath 切换。
-%     RSS_proposed 已转为普通目录 (非 submodule), 其余三个仍为 submodule。
 %
 % 用法：
 %   cd d:\PROJECT\RSS-MPC-Comparison-Pipeline-rss_hpipm
@@ -19,7 +19,7 @@ function setup_paths()
     addpath(fullfile(workspace_root, 'batch_simulation'));
     addpath(fullfile(workspace_root, 'algorithms'));
 
-    % 检查算法目录是否就绪 (RSS_proposed 为普通目录, 其余为 submodule)
+    % 检查算法目录是否就绪 (均为普通目录, 随主仓库 checkout)
     submodule_names = {'RSS_proposed', 'RSS_sqp', 'RSS_fmincon', 'RSS_active_set'};
     missing = {};
     for i = 1:length(submodule_names)
@@ -30,13 +30,12 @@ function setup_paths()
     end
     if ~isempty(missing)
         warning('setup_paths:MissingAlgorithm', ...
-            ['以下算法目录未就绪: %s\n', ...
-             'RSS_proposed 为普通目录 (已随主仓库 checkout), 其余为 submodule, 请运行: git submodule update --init --recursive'], ...
+            '以下算法目录未就绪: %s (均为随主仓库 checkout 的普通目录, 请检查仓库完整性)', ...
             strjoin(missing, ', '));
     end
 
     fprintf('MATLAB 路径已设置：\n');
     fprintf('  - core/\n');
     fprintf('  - batch_simulation/\n');
-    fprintf('  - algorithms/ (RSS_proposed 为普通目录; RSS_sqp/RSS_fmincon/RSS_active_set 为 submodule)\n');
+    fprintf('  - algorithms/ (四个算法目录均为普通目录)\n');
 end
