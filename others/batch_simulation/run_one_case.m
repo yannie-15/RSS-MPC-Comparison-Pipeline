@@ -2,13 +2,14 @@ function summary = run_one_case(config, scenario)
 % RUN_ONE_CASE 运行单次闭环仿真并计算完整指标
 %
 % 算法调用架构:
-%   - proposed-3iter  → algorithms/RSS_proposed/control_RSS_ocpqcqp.m  (HPIPM OCP QCQP + SCP)
+%   - proposed-3iter  → algorithms/RSS_proposed/control_RSS_denseqcqp.m (Dense QCQP golden oracle;
+%                       生产实现 OCP QCQP + SCP 在 pipeline/ Python)
 %   - e-lmpc          → algorithms/RSS_sqp/control_RSS.m        (git submodule)
 %   - interior-point  → algorithms/RSS_fmincon/control_RSS.m    (git submodule, main 分支)
 %   - active-set      → algorithms/RSS_active_set/control_RSS.m (git submodule, active-set 分支)
 %
 % 各算法接口不同, 本函数负责适配:
-%   RSS_proposed:  [u, new_state_dot, velocity, diagnostics] = control_RSS_ocpqcqp(path, step, state_dot, state)
+%   RSS_proposed:  [u, new_state_dot, velocity, diagnostics] = control_RSS_denseqcqp(path, step, state_dot, state)
 %   RSS_sqp:       [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state)
 %   RSS_fmincon / RSS_active_set:
 %                    [new_state_dot, velocity, solve_time, iter_num] = control_RSS(path, step, state_dot, state, params)
@@ -40,8 +41,8 @@ function summary = run_one_case(config, scenario)
     algorithm = lower(config.algorithm);
 
     % 定位 submodule 路径
-    script_dir = fileparts(mfilename('fullpath'));
-    workspace_root = fileparts(script_dir);
+    script_dir = fileparts(mfilename('fullpath'));       % <repo>/others/batch_simulation
+    workspace_root = fileparts(fileparts(script_dir));   % <repo>
     algorithms_dir = fullfile(workspace_root, 'algorithms');
     submodule_dirs = containers.Map( ...
         {'proposed-3iter', 'e-lmpc', 'interior-point', 'active-set'}, ...
@@ -106,11 +107,12 @@ function summary = run_one_case(config, scenario)
             % 按算法名分发调用
             switch algorithm
                 case 'proposed-3iter'
-                    % RSS_proposed: [u, new_state_dot, velocity, diagnostics] = control_RSS_ocpqcqp(path, step, state_dot, state)
+                    % RSS_proposed: [u, new_state_dot, velocity, diagnostics] = control_RSS_denseqcqp(path, step, state_dot, state)
+                    % MATLAB 侧保留 Dense QCQP golden oracle; 生产实现 (OCP QCQP + SCP) 在 pipeline/ Python
                     addpath(submodule_dirs('proposed-3iter'));
                     addpath(override_dir);  % 确保 main 的 config 覆盖 submodule 的 config
                     [u_full, worldVelocity, bodyVelocity, diagnostics] = ...
-                        control_RSS_ocpqcqp(path, k, lastBodyVelocity, state');
+                        control_RSS_denseqcqp(path, k, lastBodyVelocity, state');
                     rmpath(submodule_dirs('proposed-3iter'));
                     u = u_full(:, 1);
                     solve_time = diagnostics.total_solve_time;  % SCP 迭代总耗时

@@ -20,20 +20,20 @@ function report = verify_constraints_hpipm()
 %        worldVelocity == T_world_body * bodyVelocity
 %
 % 说明：
-%   - 本脚本验证每个 MPC 时刻 control_RSS_ocpqcqp 最终返回的 u_full。
+%   - 本脚本验证每个 MPC 时刻 control_RSS_denseqcqp (Dense QCQP golden oracle) 最终返回的 u_full。
 %   - 若需验证每次 RSS 内部迭代，控制器还需在 diag 中返回每次迭代的 u。
 %   - 未执行或未检查的条目使用 NaN，不会被误统计为“零违反”。
 %   - 求解失败后不使用失败解推进状态。
 %
 % 用法：
 %   cd('d:/PROJECT/RSS-MPC-Comparison-Pipeline-rss_hpipm')
-%   addpath('verification');
+%   addpath('others/verification');
 %   setenv('HPIPM_OCP_QCQP_MODE','speed');
 %   verify_constraints_hpipm;
 
 %% 路径设置
-this_dir = fileparts(mfilename('fullpath'));
-project_root = fileparts(this_dir);
+this_dir = fileparts(mfilename('fullpath'));            % <repo>/others/verification
+project_root = fileparts(fileparts(this_dir));          % <repo>
 
 % 添加 core/ (共享工具) 和 algorithms/RSS_proposed/ (控制器 + 求解器)
 core_dir = fullfile(project_root, 'core');
@@ -49,7 +49,7 @@ end
 % (MATLAB Engine caches Python modules; must reload after .py changes;
 %  hpipm_qp_solver.py add_dll_directory code must re-execute to set DLL path)
 try
-    % hpipm_qp_solver.py 现与 control_RSS_ocpqcqp.m 同目录 (algorithms/RSS_proposed/)
+    % hpipm_qp_solver.py 现与 control_RSS_denseqcqp.m 同目录 (algorithms/RSS_proposed/)
     sys_mod = py.importlib.import_module('sys');
     py.getattr(sys_mod, 'path').append(rss_proposed_dir);
     solver_mod = py.importlib.import_module('hpipm_qp_solver');
@@ -168,7 +168,7 @@ for step = 1:num_steps
 
     try
         [u_full,worldVelocity,bodyVelocity,diag] = ...
-            control_RSS_ocpqcqp(path,step,last_vel,state);
+            control_RSS_denseqcqp(path,step,last_vel,state);
 
         [solver_ok,status_text] = extract_solver_status(diag);
         viol.hpipm_status{step} = status_text;
@@ -478,8 +478,7 @@ report.undefined_angle_transition_count = ...
     undefined_angle_transition_count;
 report.verification_passed = verification_passed;
 
-results_dir = fullfile( ...
-    project_root,'verification','results');
+results_dir = fullfile(this_dir, 'results');
 
 if ~exist(results_dir,'dir')
     mkdir(results_dir);
@@ -644,7 +643,7 @@ check.angle_worst_k = angle_worst_k;
 check.angle_worst_n = angle_worst_n;
 end
 
-%% 提取求解状态 (适配当前 control_RSS_ocpqcqp.m 的 diagnostics 结构)
+%% 提取求解状态 (适配当前 control_RSS_denseqcqp.m 的 diagnostics 结构)
 % 严格检查: step_failed, 全部 3 个 outer status, solver_call_count == 3
 function [solver_ok,status_text] = extract_solver_status(diag)
 solver_ok = false;
@@ -654,7 +653,7 @@ if ~isstruct(diag)
     return;
 end
 
-% 1. 优先检查 step_failed (control_RSS_ocpqcqp.m 设置)
+% 1. 优先检查 step_failed (control_RSS_denseqcqp.m 设置)
 if isfield(diag,'step_failed') && diag.step_failed
     status_text = 'StepFailed';
     return;

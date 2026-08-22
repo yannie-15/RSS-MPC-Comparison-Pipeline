@@ -8,11 +8,11 @@
 %
 % 用法：
 %   cd d:\PROJECT\RSS-MPC-Comparison-Pipeline-rss_hpipm
-%   addpath('core'); setup_paths
+%   addpath('others'); setup_paths
 
 function setup_paths()
-    script_dir = fileparts(mfilename('fullpath'));
-    workspace_root = fileparts(script_dir);
+    script_dir = fileparts(mfilename('fullpath'));       % <repo>/others
+    workspace_root = fileparts(script_dir);              % <repo>
 
     % 添加核心工具与批量仿真目录
     addpath(fullfile(workspace_root, 'core'));

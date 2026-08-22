@@ -16,8 +16,9 @@ Thumbs.db
 
 # 仿真产物 (不提交)
 results/batch/
-paper_reproduction/results/
-verification/results/
+results/pipeline/
+others/paper_reproduction/results/
+others/verification/results/
 
 # 临时参考仓库
 temp_reference_repo/
@@ -27,9 +28,3 @@ temp_reference_repo/
 
 # 编译产物
 build/
-
-# 临时文件
-t.c
-t.exe
-*.tmp
-test_hpipm.py

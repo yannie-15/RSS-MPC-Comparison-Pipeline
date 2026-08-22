@@ -43,8 +43,8 @@ function summary = run_paper_baseline_case(config, scenario)
     algorithm = lower(config.algorithm);
 
     % 定位 submodule 路径 (与 run_one_case 一致)
-    script_dir = fileparts(mfilename('fullpath'));
-    workspace_root = fileparts(script_dir);
+    script_dir = fileparts(mfilename('fullpath'));       % <repo>/others/paper_reproduction
+    workspace_root = fileparts(fileparts(script_dir));   % <repo>
     algorithms_dir = fullfile(workspace_root, 'algorithms');
     submodule_dirs = containers.Map( ...
         {'proposed-3iter', 'e-lmpc', 'interior-point', 'active-set'}, ...
@@ -198,38 +198,21 @@ function summary = run_paper_baseline_case(config, scenario)
             % 而是使用 submodule 返回的 solve_time, 更准确)
             switch algorithm
                 case 'proposed-3iter'
-                    % RSS_proposed: [u, new_state_dot, velocity, diagnostics] = control_RSS_ocpqcqp(path, step, state_dot, state)
-                    % 求解器通过 cfg.solver 切换:
-                    %   'ocpqcqp'   (默认) → control_RSS_ocpqcqp   (HPIPM OCP QCQP, 精确二次约束)
-                    %   'denseqcqp'        → control_RSS_denseqcqp (HPIPM Dense QCQP, Golden oracle)
+                    % RSS_proposed: [u, new_state_dot, velocity, diagnostics] = control_RSS_denseqcqp(path, step, state_dot, state)
+                    % MATLAB 侧保留的唯一 proposed 求解器: Dense QCQP golden oracle (离线对照).
+                    % 生产实现 (OCP QCQP + SCP) 为 algorithms/RSS_proposed/control_rss_ocpqcqp.py (纯 Python, 已对齐 golden).
                     global RSS_WARMSTART_UHAT RSS_SOLVER_MODE;
                     if k == 1
                         RSS_WARMSTART_UHAT = [];
-                        if ~isfield(config, 'solver') || isempty(config.solver)
-                            config.solver = 'ocpqcqp';  % 默认
+                        if isfield(config, 'solver') && strcmpi(config.solver, 'ocpqcqp')
+                            fprintf('[proposed-3iter] 注: MATLAB 版 OCP QCQP 已移除 (生产实现在 pipeline/ Python), 改用 Dense QCQP golden oracle\n');
                         end
-                        solver_mode = lower(config.solver);
-                        switch solver_mode
-                            case 'ocpqcqp'
-                                fprintf('[proposed-3iter] 求解器: control_RSS_ocpqcqp (OCP QCQP, 精确二次约束)\n');
-                            case 'denseqcqp'
-                                fprintf('[proposed-3iter] 求解器: control_RSS_denseqcqp (Dense QCQP, Golden oracle)\n');
-                            otherwise
-                                warning('未知 solver mode: %s, 使用默认 ocpqcqp', config.solver);
-                                solver_mode = 'ocpqcqp';
-                        end
-                        RSS_SOLVER_MODE = solver_mode;
+                        fprintf('[proposed-3iter] 求解器: control_RSS_denseqcqp (Dense QCQP, Golden oracle)\n');
                     end
-                    solver_mode = RSS_SOLVER_MODE;
-                    clear K H R xInit control_RSS_denseqcqp control_RSS_ocpqcqp
-                    switch solver_mode
-                        case 'ocpqcqp'
-                            [u_full, worldVelocity, bodyVelocity, diagnostics] = ...
-                                control_RSS_ocpqcqp(path, k, lastBodyVelocity, state');
-                        case 'denseqcqp'
-                            [u_full, worldVelocity, bodyVelocity, diagnostics] = ...
-                                control_RSS_denseqcqp(path, k, lastBodyVelocity, state');
-                    end
+                    RSS_SOLVER_MODE = 'denseqcqp';
+                    clear K H R xInit control_RSS_denseqcqp
+                    [u_full, worldVelocity, bodyVelocity, diagnostics] = ...
+                        control_RSS_denseqcqp(path, k, lastBodyVelocity, state');
                     u = u_full(:, 1);
                     solve_time = diagnostics.total_solve_time;  % SCP 迭代总耗时
                     % 使用真实 solver_call_count (不是 max_iter, 后者始终为 3 但不代表实际调用次数)

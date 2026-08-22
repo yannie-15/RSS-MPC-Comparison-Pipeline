@@ -2,66 +2,67 @@
 
 基于论文 *RSS2026: Exploit Agile Mobility of Steerable-Wheeled Mobile Robots: A Fast Motion Planning Approach* 的四轮全向底盘 MPC 仿真复现项目，对比四种控制器。
 
-> 当前分支 `hpipm_ocp_qcqp`：proposed-3iter 的默认求解器已从 legacy OCP QP（切平面线性化 + SCP）升级为 **HPIPM 原生 OCP QCQP**（凸二次约束 + SCP），与 Dense QCQP golden oracle 在 100 步闭环测试中数值一致。
+> 项目主干为 `pipeline/` 统一单场景仿真入口（dt (tau) 固定 0.01 s，4 算法可选）；批量仿真 / 论文复现 / 约束验证等非主干内容统一放在 `others/`。
 
 ## 目录结构
 
 ```
 RSS-MPC-Comparison-Pipeline-rss_hpipm/
-├── main.py                              # Python 入口, 通过 MATLAB Engine 调用
-├── default_python_config.json           # Python 默认配置
+├── pipeline/                            # 统一单场景 pipeline (4 算法可选, 项目主干)
+│   ├── main.py                          #   入口: --seed/--algorithm/--K/--iters
+│   ├── params.py                        #   参数定义 (dt=0.01 常量/车辆/权重/求解器)
+│   ├── trajectory_generator.py          #   轨迹生成 (seed_id, K -> Bezier 参考 + 场景)
+│   ├── dynamics.py                      #   原始动力学 (状态传播 + 轮子正运动学)
+│   ├── simulator.py                     #   闭环仿真器 (4 算法统一闭环)
+│   ├── metrics.py                       #   评估 (RMSE/J 分解/求解时长/约束违反)
+│   ├── plotting.py                      #   结果画图 (轨迹/误差/轮速/求解时长...)
+│   ├── matlab_algorithm.py              #   MATLAB Engine 算法桥 (e-lmpc 等 3 算法每步求解)
+│   └── matlab_control_bridge.m          #   MATLAB 侧每步求解桥 (Engine 调 control_RSS)
 │
 ├── algorithms/                          # 算法包
-│   ├── RSS_proposed/                    # proposed 控制器 (HPIPM OCP QCQP + SCP)
-│   │   ├── control_RSS_ocpqcqp.m        #   默认: OCP QCQP 主控制器 (SCP 外层循环)
-│   │   ├── control_RSS_denseqcqp.m      #   Dense QCQP golden oracle (离线对照)
-│   │   ├── construct_ocp_qcqp_from_rss.m    #   OCP QCQP 矩阵构造 (原生二次约束)
-│   │   ├── construct_complete_qp_from_rss.m #   Dense QCQP 矩阵构造 (golden oracle)
-│   │   ├── check_qk_violation.m         #   约束违反诊断工具
-│   │   ├── config.m                     #   算法参数
+│   ├── RSS_proposed/                    # proposed 生产实现 (纯 Python) + golden oracle
+│   │   ├── control_rss_ocpqcqp.py       #   proposed 控制器 (SCP 外层, 迭代数可指定)
+│   │   ├── construct_ocp_qcqp.py        #   OCP QCQP 矩阵构造
 │   │   ├── hpipm_qp_solver.py           #   HPIPM Python 接口 (solve_ocp_qcqp / solve_qcqp)
-│   │   ├── build_hpipm_windows.sh       #   Windows MSYS2 编译脚本
-│   │   ├── tests/                       #   测试脚本 (Test A/B/C/D)
-│   │   │   ├── test_ocp_qcqp_construction_equivalence.m  # Test A: 构造等价性
-│   │   │   ├── test_hpipm_ocp_qcqp_smoke.m              # Test B: wrapper 冒烟测试
-│   │   │   ├── test_ocp_qcqp_fixed_qk_alignment.m       # Test C: 固定 QK 对齐
-│   │   │   └── test_ocp_qcqp_golden_100steps.m          # Test D: 100 步闭环 Golden 对比
+│   │   ├── control_RSS_denseqcqp.m      #   Dense QCQP golden oracle (离线对照)
+│   │   ├── construct_complete_qp_from_rss.m #   Dense QCQP 矩阵构造 (golden oracle)
+│   │   ├── config.m                     #   算法参数
+│   │   └── build_hpipm_windows.sh       #   Windows MSYS2 编译脚本
 │   ├── RSS_sqp/                         # → github.com/serendipitjx/RSS_sqp (submodule, main)
 │   ├── RSS_fmincon/                     # → github.com/serendipitjx/RSS_fmincon (submodule, main)
 │   ├── RSS_active_set/                  # → github.com/serendipitjx/RSS_fmincon (submodule, active-set 分支)
 │   └── .gitattributes
 │
-├── core/                                # 仿真核心工具
-│   ├── setup_paths.m                    # 路径设置 (含 submodule 检查)
+├── core/                                # MATLAB 仿真核心工具 (pipeline 桥/批量仿真共用)
 │   ├── defaultConfig.m                  # 默认参数
 │   ├── generateReference.m              # Bernstein 多项式参考轨迹
 │   ├── propagateState.m                 # 状态传播
 │   ├── computeWheelOutputs.m            # 轮速 / 轮角计算
 │   └── computeMetrics.m                 # RMSE / J / 求解时间 / 约束违反率
 │
-├── batch_simulation/                    # 批量仿真 (多 seed 随机场景)
-│   ├── main.m                           # MATLAB 批量仿真主入口
-│   ├── run_batch_simulation.m           # (seed × algorithm) 批量仿真循环
-│   ├── run_one_case.m                   # 单场景闭环仿真, 按算法名分发到 submodule
-│   ├── comparison_init.m / _load.m / _save.m  # comparison 结构体管理
-│   ├── scenario_bank.m / scenario_generator.m # 场景库与采样
-│   ├── plot_one_algorithm.m             # 单算法 summary 图
-│   ├── plot_paper_comparison.m          # 论文风格对比图 (Fig.3/4/5)
-│   ├── replot_per_seed.m                # 逐 seed 轨迹重绘
-│   ├── print_table_ii.m                 # Table II 汇总打印
-│   ├── save_algorithm_csv.m             # 单算法 CSV 导出
-│   ├── matlab_bridge.py                 # MATLAB Engine 启动/调用/关闭
-│   ├── config_io.py                     # JSON 配置加载/合并/保存
-│   └── result_io.py                     # summary JSON 解析/打印
+├── batch_simulation/                    # 场景库生成 (MATLAB)
+│   └── scenario_bank.m / scenario_generator.m # 场景库与采样 (pipeline 桥 seed>=1 时读取)
 │
-├── paper_reproduction/                  # 论文 Section IV 复现
-│   ├── paper_reproduction.m             # 复现入口
-│   ├── run_paper_baseline_case.m        # 论文复现专用仿真 (默认 solver=ocpqcqp)
-│   └── results/                         # 输出目录 (运行时生成)
+├── others/                              # 与 pipeline 主干无关的批量/复现/校验内容
+│   ├── setup_paths.m                    # 路径设置 (含 submodule 检查)
+│   ├── batch_simulation/                # MATLAB 批量仿真 (多 seed 随机场景)
+│   │   ├── main.m / main.py             # 批量入口 (MATLAB / Python)
+│   │   ├── run_one_case.m               # 单场景闭环仿真, 按算法名分发到 submodule
+│   │   ├── run_batch_simulation.m       # (seed × algorithm) 批量仿真循环
+│   │   ├── comparison_init.m / _load.m / _save.m  # comparison 结构体管理
+│   │   ├── plot_one_algorithm.m         # 单算法 summary 图
+│   │   ├── plot_paper_comparison.m      # 论文风格对比图 (Fig.3/4/5)
+│   │   ├── replot_per_seed.m            # 逐 seed 轨迹重绘
+│   │   ├── print_table_ii.m             # Table II 汇总打印
+│   │   ├── save_algorithm_csv.m         # 单算法 CSV 导出
+│   │   └── matlab_bridge.py / config_io.py / result_io.py  # Python 桥接
+│   ├── paper_reproduction/              # 论文 Section IV 复现 (MATLAB)
+│   │   ├── paper_reproduction.m         # 复现入口
+│   │   └── run_paper_baseline_case.m    #   论文复现专用仿真 (proposed 经 Dense QCQP golden oracle)
+│   └── verification/                    # HPIPM 约束验证
+│       └── verify_constraints_hpipm.m   #   HPIPM 解约束验证脚本
 │
-├── verification/                        # HPIPM 约束验证
-│   ├── verify_constraints_hpipm.m       # HPIPM 解约束验证
-│   └── results/                         # 输出目录 (运行时生成)
+├── scenario_bank/                       # 场景库 (scenario_seed{1..150}.mat, 运行时生成)
 │
 └── third_party/                         # 第三方求解器源码
     ├── blasfeo/                         # BLASFEO 线性代数库 (submodule)
@@ -72,10 +73,12 @@ RSS-MPC-Comparison-Pipeline-rss_hpipm/
 
 | 算法 | 求解器 | 来源 | 特点 |
 |---|---|---|---|
-| proposed-3iter | HPIPM (OCP QCQP + SCP) | RSS_proposed (本地目录) | 原生凸二次约束 + SCP 迭代, K=6, 默认 solver |
+| proposed-3iter | HPIPM (OCP QCQP + SCP) | RSS_proposed/ (纯 Python) | 原生凸二次约束 + SCP 迭代, K=6; Dense QCQP golden oracle 同目录 |
 | e-lmpc | fmincon SQP | RSS_sqp (submodule) | MaxIter=1, K=6 |
 | interior-point | fmincon interior-point | RSS_fmincon (submodule) | K=6 |
 | active-set | fmincon active-set | RSS_active_set (submodule) | K=6 |
+
+> MATLAB 三算法逐步日志统一口径：`exitflag` 为 fmincon 原生码（正值 1~5 均为收敛，仅判据不同；0=达迭代上限；负值=失败），另打印 `status = sign(exitflag)`（1=收敛 / 0=达 MaxIterations / -1=失败）。e-lmpc 为 "1 iteration edition" 设计（每步单次 SQP 迭代），其 status=0 属预期而非失败。
 
 ### proposed-3iter 求解策略 (OCP QCQP + SCP)
 
@@ -84,14 +87,12 @@ RSS-MPC-Comparison-Pipeline-rss_hpipm/
 | 组件 | 说明 |
 |---|---|
 | `solve_ocp_qcqp` | HPIPM 的 `ocp_qcqp` IPM 求解器，原生处理凸二次约束 (转向锥 + 轮速 SOC) |
-| `construct_ocp_qcqp_from_rss` | 构造 OCP QCQP 矩阵 (A/B/Bb/Q/R/S/q/r/Qq/Sq/Rq/qq/rq/uq)，二次约束直接以二次形式给出 |
-| **SCP 外层** | 固定锚点 `u_hat` 后原非凸问题转化为凸 QCQP；每个 MPC step 执行 3 次 SCP 迭代 |
+| `algorithms/RSS_proposed/construct_ocp_qcqp.py` | 构造 OCP QCQP 矩阵 (A/B/Bb/Q/R/S/q/r/Qq/Sq/Rq/qq/rq/uq)，二次约束直接以二次形式给出 |
+| **SCP 外层** | 固定锚点 `u_hat` 后原非凸问题转化为凸 QCQP；每个 MPC step 执行 3 次 SCP 迭代 (论文基准; 纯 Python pipeline 可用 `--iters` 指定) |
 | **warm_start=2** | 选中 HPIPM "全量裁剪初始化"分支，绕过 DLL C 层 `d_ocp_qcqp_ipm_arg_set_t0_init` 误写 `t_lam_min` 的 bug (step 94 剧烈机动段触发) |
 | **求解器参数** | `mode=speed`、`mu0=10`、`warm_start=2` (通过环境变量 `HPIPM_OCP_QCQP_MODE` 切换) |
 
-#### 与 Dense QCQP golden oracle 的对齐验证
-
-100 步闭环 Golden 对比 (`test_ocp_qcqp_golden_100steps.m`)：
+与 Dense QCQP golden oracle（离线对照基准，运行时禁止作为 fallback）的 100 步闭环对齐验证：
 
 | 指标 | Dense QCQP (oracle) | OCP QCQP (默认) | 差异 |
 |---|---|---|---|
@@ -102,178 +103,115 @@ RSS-MPC-Comparison-Pipeline-rss_hpipm/
 
 > 结论：PASS (100 步 Golden 对齐)。OCP QCQP 在数值精度上与 Dense QCQP 完全等价，且因利用 OCP 结构稀疏性而显著更快。
 
-### Dense QCQP golden oracle
-
-`control_RSS_denseqcqp.m` + `construct_complete_qp_from_rss.m` 保留作为**离线对照基准**，用于验证 OCP QCQP 实现的正确性。运行时禁止使用 Dense QCQP 作为 fallback（仅作为测试基准）。
-
-### Legacy OCP QP (已删除)
-
-早期实现 `control_RSS.m` + `construct_ocp_qp_from_rss.m` 通过切平面线性化将二次约束转为线性约束，数学上不等价于原问题，已被 OCP QCQP 实现取代并删除。
-
-## 获取项目
+## pipeline 命令行调用
 
 ```bash
-# clone 时带 --recursive (自动初始化全部 submodule)
-git clone --recursive <repo-url>
+# proposed-3iter: 论文固定场景 (seed=0), K=6, 默认 3 次 SCP 迭代 (纯 Python)
+python pipeline/main.py --seed 0 --algorithm proposed-3iter --K 6
 
-# 或已 clone 后初始化 submodule
-git submodule update --init --recursive
+# proposed-3iter: scenario_bank 随机场景 (seed>=1), 指定 5 次 SCP 外层迭代
+python pipeline/main.py --seed 1 --algorithm proposed-3iter --K 6 --iters 5
+
+# MATLAB 算法: 经 MATLAB Engine 每步求解 (引擎启动一次约 30s, 需 matlabengine 包)
+python pipeline/main.py --seed 0 --algorithm e-lmpc --K 6
+python pipeline/main.py --seed 1 --algorithm active-set --K 6
+python pipeline/main.py --seed 0 --algorithm interior-point --K 6
+
+# 模块方式启动
+python -m pipeline.main --seed 0 --algorithm proposed-3iter --K 6
 ```
-
-## 命令速查
-
-> 以下 MATLAB 命令均假设当前工作目录为**项目根目录**（`RSS-MPC-Comparison-Pipeline-rss_hpipm/`）。各入口脚本内部通过 `fileparts(mfilename('fullpath'))` 自动定位依赖路径，无需 `cd` 进子目录，只需 `addpath` 即可。
-
-| 场景 | 入口 | 命令 |
-|------|------|------|
-| 4 算法批量对比 (Python) | `main.py` | `python main.py` |
-| 4 算法批量对比 (MATLAB) | `batch_simulation/main.m` | `addpath('batch_simulation'); main` |
-| 论文 Section IV 复现 | `paper_reproduction/paper_reproduction.m` | `addpath('paper_reproduction'); paper_reproduction` |
-| 约束验证 | `verification/verify_constraints_hpipm.m` | `addpath('verification'); verify_constraints_hpipm` |
-| OCP QCQP Golden 对比 | `test_ocp_qcqp_golden_100steps.m` | 见下方"测试"章节 |
-
-## Python 入口
-
-通过 `main.py` 调用 MATLAB Engine 执行批量仿真。
-
-### 安装 MATLAB Engine for Python
-
-```bash
-cd <matlabroot>/extern/engines/python
-python setup.py install
-python -c "import matlab.engine; print('OK')"
-```
-
-### 运行
-
-```bash
-# 默认: 1:10 seeds, 全部 4 种算法
-python main.py
-
-# 自定义 seed 范围
-python main.py --seeds 1:100
-
-# 只跑一种算法
-python main.py --algorithms proposed-3iter
-
-# 组合参数 + 强制重新生成场景
-python main.py --seeds 1:50 --algorithms proposed-3iter,e-lmpc --force-regen
-```
-
-### CLI 参数
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
-| `--seeds` | 种子范围，格式 `start:end` 或单个整数 | `1:10` |
-| `--algorithms` | 算法列表，逗号分隔 | `e-lmpc,active-set,interior-point,proposed-3iter` |
-| `--force-regen` | 强制重新生成场景文件 | 关闭 |
+| `--seed` | 场景 seed_id (0=paper_fixed 固定场景, >=1=scenario_bank) | `0` |
+| `--algorithm` | 算法名, 4 选 1: `proposed-3iter` / `e-lmpc` / `active-set` / `interior-point`。后三者经 MATLAB Engine 每步求解 | `proposed-3iter` |
+| `--K` | MPC 预测时域步长 (仅 proposed-3iter 生效; MATLAB 算法硬编码 6) | `6` |
+| `--iters` | proposed 的 SCP 外层迭代数 (每步 HPIPM 求解次数)。默认 3 = 论文基准；非 3 时结果目录名带 `_iters{N}` 后缀 | `3` |
+| `--out` | 结果输出根目录 | `results/pipeline` |
+| `--quiet` | 关闭算法 per-iteration 打印 | 关闭 |
 
-### 输出
+运行后在 `results/pipeline/{algorithm}/seed{N}_K{K}/` 生成结果三件套：
 
-运行后在 `results/batch/` 生成：
-- `comparison_checkpoint.mat` / `comparison_final.mat`
-- `csv/{算法名}_results.csv`
-- `per_algorithm/{算法名}_summary.png` + `per_algorithm/{算法名}/seed_XXXX.png`
-- `comparison/fig3_trajectories.png` 等论文对比图
+1. **`run_config.json`** — 记录传入参数 (seed_id / 算法 / K / iters / dt / 场景 / 权重 / 求解器)
+2. **`metrics.json`** — 评估指标 (RMSE / J_total / medianSolveTime / 约束违反量 / 成功率...)
+3. **`figures/*.png`** — 画图 (轨迹 / 跟踪误差 / 轮速 / 转向速率 / 求解时长 / 控制输入)
+4. **`simulation_data.npz`** — 原始数组 (复画图 / golden 对比用)
 
-## MATLAB 入口
+环境要求：proposed-3iter 需 HPIPM DLL（Windows 编译脚本 `algorithms/RSS_proposed/build_hpipm_windows.sh`）；MATLAB 算法需 `matlabengine` 包（版本须与 MATLAB 发行版匹配，安装见 `pipeline/matlab_algorithm.py` 模块注释）+ MATLAB 在 PATH。clone 后先执行 `git submodule update --init --recursive`。
 
-### 环境要求
+## 各板块调用逻辑与流程图
 
-- MATLAB (需 Optimization Toolbox 提供 fmincon)
-- Python 3.9+ (HPIPM 接口, 仅 proposed-3iter 需要)
-- MSYS2 + gcc + make + bc (编译 HPIPM/BLASFEO, 仅 Windows 需要)
+### 总体流程图
 
-### HPIPM 编译 (仅 proposed-3iter 需要)
-
-```powershell
-# 1. MSYS2 UCRT64 安装工具链
-pacboy sync:mman-git ucrt64/toolchain msys/make msys/bc
-
-# 2. 运行编译脚本
-C:\msys64\usr\bin\env.exe MSYSTEM=UCRT64 /usr/bin/bash -lc "/d/PROJECT/RSS-MPC-Comparison-Pipeline-rss_hpipm/algorithms/RSS_proposed/build_hpipm_windows.sh"
-
-# 3. 验证 Python 加载
-python -c "import sys; sys.path.insert(0,'algorithms/RSS_proposed'); import hpipm_qp_solver; print('HPIPM_OK=', hpipm_qp_solver._HPIPM_OK)"
+```
+python pipeline/main.py --seed S --algorithm A --K K [--iters N]
+        │  (dt = 0.01 s 写死)
+        ▼
+trajectory_generator.py + params.py
+ (seed,K) → Bezier 参考 + 场景; 车辆/权重/求解器参数
+        │
+        ▼
+simulator.py (原始动力学闭环, 按步长 K 循环调用算法 A)
+        │
+        │  ◄── 唯一分支点: 仿真器每步调用算法时按 A 分发
+        │
+        ├─ A = proposed-3iter (纯 Python 路径)
+        │      ▼
+        │  algorithms/RSS_proposed/control_rss_ocpqcqp.py (SCP 外层 × iters)
+        │      │ 每次迭代
+        │      ▼
+        │  algorithms/RSS_proposed/construct_ocp_qcqp.py (OCP QCQP 矩阵)
+        │      ▼
+        │  algorithms/RSS_proposed/hpipm_qp_solver.py → third_party/hpipm DLL
+        │      │ u* 返回 simulator → 推进状态, 逐步记录
+        │
+        └─ A ∈ {e-lmpc, active-set, interior-point} (MATLAB Engine 每步求解)
+               ▼
+           pipeline/matlab_algorithm.py (MatlabAlgorithmBridge)
+           (常驻 MATLAB Engine 会话, 启动一次 ~30s; 每步仅函数级调用,
+            轨迹等大数组经 base workspace 一次性传入)
+               ▼
+           pipeline/matlab_control_bridge.m
+           (persistent 一次性初始化: addpath core/ + batch_simulation/,
+            组装 config: seed=0 → defaultConfig; seed>=1 → scenario_bank;
+            e-lmpc/active-set 写临时 config.m 覆盖 submodule config())
+               ▼
+           algorithms/{RSS_sqp | RSS_fmincon | RSS_active_set}/control_RSS.m
+           (fmincon 求解, 逐步打印 exitflag+status)
+               ▼
+           u/世界速度/车体速度 回传 Python → 推进状态, 逐步记录
+        │
+        ▼
+统一 SimResult (两条路径同构)
+        │
+   ┌────┼─────────┐
+   ▼    ▼         ▼
+metrics.py  plotting.py  结果三件套落盘
+(RMSE/J/耗时) (6 张图) (run_config.json / metrics.json / figures/ / npz)
 ```
 
-编译产物：`third_party/hpipm/lib/libhpipm.dll`、`third_party/blasfeo/lib/libblasfeo.a`
+> 说明：仿真器对 4 种算法一视同仁（同一条"循环调用算法"主干）：轨迹生成、参数配置、原始动力学闭环推进、评估与画图全部在 Python 侧；MATLAB 系算法仅在每步求解时经 MATLAB Engine 调用 submodule 的 `control_RSS.m`（引擎会话随仿真开启/关闭，启动一次约 30s，之后每步毫秒级调用）。
 
-### 运行批量对比
+### 各板块调用逻辑
 
-```matlab
-% 确保当前工作目录为项目根目录 RSS-MPC-Comparison-Pipeline-rss_hpipm/
-addpath('batch_simulation');
+| 板块 | 文件 | 职责 | 上游调用者 | 下游被调对象 |
+|---|---|---|---|---|
+| 入口 | `pipeline/main.py` | 解析 CLI (seed/algorithm/K/iters)，4 算法统一走 Python 主干 (轨迹→仿真→评估→落盘)，统一落盘结果三件套 | 用户命令行 | `trajectory_generator` / `simulator` / `metrics` / `plotting` |
+| 参数定义 | `pipeline/params.py` | `DT=0.01` 常量、车辆参数（轮位/vimax/phidotmax）、权重、求解器参数、RunConfig 记录结构 | 所有 pipeline 模块 | — |
+| 轨迹生成 | `pipeline/trajectory_generator.py` | (seed_id, K) → Bernstein/Bezier 参考轨迹 + 场景参数；seed=0 为 paper_fixed 固定场景，seed≥1 读 `scenario_bank/scenario_seed{N}.mat`（与 MATLAB 同源） | `main.py` | `simulator.py` |
+| 原始动力学 | `pipeline/dynamics.py` | `propagate_state`（状态传播）+ `compute_wheel_outputs`（轮速/轮角正运动学）；使用**原始动力学**而非算法内部展开/线性化误差动力学 | `simulator.py` | — |
+| 闭环仿真器 | `pipeline/simulator.py` | 原始动力学闭环：每步 `control(path, step, state_dot, state, params)` → u/世界速度/车体速度/诊断，推进状态并逐步记录；step_failed/NaN 检查失败即终止；4 算法均在此闭环（MATLAB 算法经 `MatlabAlgorithmBridge` 每步求解） | `main.py` | `dynamics` / `control_rss_ocpqcqp` / `matlab_algorithm` |
+| proposed 控制器 | `algorithms/RSS_proposed/control_rss_ocpqcqp.py` | RSS 控制律：SCP 外层循环 `--iters` 次（默认 3），每次构造并求解凸 QCQP 子问题，失败时保留最近可行 incumbent | `simulator.py` | `construct_ocp_qcqp` |
+| QCQP 构造 | `algorithms/RSS_proposed/construct_ocp_qcqp.py` | RSS 模型 → OCP QCQP 矩阵（A/B/Bb/Q/R/S/q/r/Qq/Sq/Rq/qq/rq/uq），转向锥/轮速 SOC 以原生二次约束给出 | `control_rss_ocpqcqp.py` | `hpipm_qp_solver` |
+| HPIPM 接口 | `algorithms/RSS_proposed/hpipm_qp_solver.py` | ctypes 封装，加载 `third_party/hpipm/lib/libhpipm.dll`，调 `ocp_qcqp` IPM 求解器 | `construct_ocp_qcqp.py` | HPIPM/BLASFEO DLL |
+| MATLAB Engine 桥 | `pipeline/matlab_algorithm.py` | `MatlabAlgorithmBridge`：启动常驻 MATLAB Engine 会话（一次），轨迹/算法/seed 经 base workspace 一次性传入；每步 `control()` 调 `matlab_control_bridge` 求解并回传，签名与 `control_rss_ocpqcqp` 统一 | `simulator.py` | `matlab_control_bridge.m` |
+| MATLAB 侧求解桥 | `pipeline/matlab_control_bridge.m` | persistent 一次性初始化（addpath core/ + batch_simulation/，组装 config：seed=0 → defaultConfig；seed≥1 → scenario_bank；e-lmpc/active-set 写临时 config.m 覆盖 submodule config()）；每步按算法分发 `control_RSS`，evalc 捕获 exitflag/status 日志回传 | `matlab_algorithm.py` | submodule `control_RSS.m` |
+| 单 case 仿真 | `others/batch_simulation/run_one_case.m` | MATLAB 版闭环（批量仿真用）：按算法名 addpath 对应 submodule 目录并临时覆盖 config，循环调用 `control_RSS.m`，原始动力学推进 | `others/batch_simulation/main.m` | submodule `control_RSS.m` |
+| 对比算法 | `algorithms/{RSS_sqp,RSS_fmincon,RSS_active_set}/control_RSS.m` | fmincon 系 NLP 求解（SQP / interior-point / active-set），统一 exitflag+status 日志口径 | `matlab_control_bridge.m` / `run_one_case.m` | fmincon |
+| 评估 | `pipeline/metrics.py` | RMSE / J_total 与 J 分解 / medianSolveTime（排除 warm-up，论文 P1-4 口径）/ 约束违反量 / 成功率 | `main.py` | — |
+| 画图 | `pipeline/plotting.py` | 6 张图：轨迹跟踪 / 跟踪误差 / 轮速（含约束线）/ 转向速率 / 每步求解时长 / 控制输入 | `main.py` | — |
 
-main                                          % 默认: 1:10 seeds, 4 种算法
-main('seeds', 1:100)                          % 自定义 seed 范围
-main('algorithms', {'proposed-3iter'})        % 只跑一种算法
-main('seeds', 1:50, 'algorithms', {'proposed-3iter'}, 'forceRegen', true)
-```
+### 与 MATLAB 的一致性
 
-## 论文复现
-
-```matlab
-% 确保当前工作目录为项目根目录 RSS-MPC-Comparison-Pipeline-rss_hpipm/
-addpath('paper_reproduction');
-
-paper_reproduction                                  % 重跑全部 4 种算法
-paper_reproduction({'proposed-3iter'})              % 只重跑指定算法, 保留其余
-paper_reproduction({'e-lmpc','active-set'})         % 只重跑指定算法, 保留其余
-```
-
-输出写入 `paper_reproduction/results/`：
-- `per_algorithm/{算法名}/{算法名}_summary.png`
-- `csv/{算法名}_results.csv`
-- `paper_reproduction.mat`
-
-### 指定 solver (proposed-3iter 专用)
-
-`run_paper_baseline_case.m` 默认使用 `solver='ocpqcqp'`。可通过 `config.solver` 切换：
-
-```matlab
-cfg = defaultConfig();
-cfg.algorithm = 'proposed-3iter';
-cfg.solver = 'ocpqcqp';   % 默认: 原生 OCP QCQP (推荐)
-% cfg.solver = 'denseqcqp'; % 可选: Dense QCQP golden oracle (离线对照)
-run_paper_baseline_case(cfg);
-```
-
-## 测试 (OCP QCQP 验证)
-
-位于 `algorithms/RSS_proposed/tests/`，按以下顺序执行：
-
-| 测试 | 文件 | 验证内容 |
-|---|---|---|
-| Test A | `test_ocp_qcqp_construction_equivalence.m` | OCP QCQP 与 Dense QCQP 矩阵构造等价性 |
-| Test B | `test_hpipm_ocp_qcqp_smoke.m` | HPIPM OCP QCQP wrapper 冒烟测试 (从最小问题到 72 条约束) |
-| Test C | `test_ocp_qcqp_fixed_qk_alignment.m` | 固定 QK 时 OCP QCQP 与 Dense QCQP 目标函数一致性 |
-| Test D | `test_ocp_qcqp_golden_100steps.m` | 100 步闭环 Golden 对比 (RMSE/J_total/validSteps) |
-
-运行 Test D：
-
-```matlab
-% 确保当前工作目录为项目根目录 RSS-MPC-Comparison-Pipeline-rss_hpipm/
-addpath('core'); setup_paths;
-addpath('algorithms/RSS_proposed');
-addpath('algorithms/RSS_proposed/tests');
-addpath('paper_reproduction');
-setenv('HPIPM_OCP_QCQP_MODE', 'speed');   % 必须设为 speed 以绕过 DLL bug
-test_ocp_qcqp_golden_100steps;
-```
-
-## 约束验证
-
-```matlab
-% 确保当前工作目录为项目根目录 RSS-MPC-Comparison-Pipeline-rss_hpipm/
-addpath('verification');
-verify_constraints_hpipm
-```
-
-验证 HPIPM 求解的解是否满足原始非线性约束（轮速 SOC 约束、转向角速率约束）。输出汇总报告 + `verification/results/hpigm_constraint_verification.mat`。
-
----
-
-## RSS_proposed 算法文件详解
-
-详见 [RSS_proposed_算法详解.md](RSS_proposed_算法详解.md)（含文件总览、物理量参数、`construct_complete_qp_from_rss.m` 的 Dense QCQP 矩阵构造、`construct_ocp_qcqp_from_rss.m` 的 OCP QCQP 矩阵构造、调用逻辑、关键设计点）。
+- proposed-3iter golden 基准 (seed=0, K=6, iters=3) 与 MATLAB 完全对齐：RMSE=0.036793, J_total=13.3838, validSteps=100/100
+- MATLAB Engine 桥接算法 (Python 主干 + MATLAB 每步求解) 与 MATLAB 侧闭环结果完全一致：e-lmpc seed=0: RMSE=0.037776, J_total=44.4226, validSteps=100/100（两侧完全一致）

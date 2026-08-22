@@ -36,11 +36,12 @@ function comparison = paper_reproduction(algorithms)
     %% =====================================================
     % 1. 路径设置
     %% =====================================================
-    script_dir = fileparts(mfilename('fullpath'));
-    workspace_root = fileparts(script_dir);
+    script_dir = fileparts(mfilename('fullpath'));       % <repo>/others/paper_reproduction
+    workspace_root = fileparts(fileparts(script_dir));   % <repo>
     addpath(fullfile(workspace_root, 'core'));
     addpath(fullfile(workspace_root, 'batch_simulation'));
     addpath(fullfile(workspace_root, 'algorithms'));
+    addpath(fullfile(workspace_root, 'others'));         % setup_paths.m 所在
     setup_paths();
 
     %% =====================================================
@@ -78,7 +79,7 @@ function comparison = paper_reproduction(algorithms)
     %% =====================================================
     % 3. 输出目录 (增量模式: 不清空整个目录, 只清理本次运行算法的输出)
     % ======================================================
-    results_dir = fullfile(workspace_root, 'paper_reproduction', 'results');
+    results_dir = fullfile(script_dir, 'results');
     if ~exist(results_dir, 'dir'), mkdir(results_dir); end
     csv_dir = fullfile(results_dir, 'csv');
     if ~exist(csv_dir, 'dir'), mkdir(csv_dir); end

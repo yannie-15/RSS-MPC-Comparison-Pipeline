@@ -15,7 +15,7 @@ function plot_paper_comparison(comparison, results_dir)
 %   plot_paper_comparison(comparison, 'D:\Projects\RSS\results');
 
     if nargin < 2 || isempty(results_dir)
-        results_dir = fullfile(fileparts(mfilename('fullpath')), '..', 'results', 'batch');
+        results_dir = fullfile(fileparts(mfilename('fullpath')), '..', '..', 'results', 'batch');
     end
 
     algorithms = comparison.algorithms;

@@ -35,13 +35,10 @@ function comparison = main(varargin)
     fprintf('\n========================================\n');
     fprintf('Step 0: 路径设置\n');
     fprintf('========================================\n');
-    % 定位 core/ 目录 (setup_paths.m 所在), 兼容从 batch_simulation/ 或其他目录调用
-    script_dir = fileparts(mfilename('fullpath'));
-    repo_root = fileparts(script_dir);
-    core_dir = fullfile(repo_root, 'core');
-    if exist(core_dir, 'dir')
-        addpath(core_dir);
-    end
+    % 定位 others/ 目录 (setup_paths.m 所在), 兼容从 others/batch_simulation/ 或其他目录调用
+    script_dir = fileparts(mfilename('fullpath'));       % <repo>/others/batch_simulation
+    repo_root = fileparts(fileparts(script_dir));        % <repo>
+    addpath(fullfile(repo_root, 'others'));
     setup_paths();
 
     %% =====================================================
@@ -70,7 +67,7 @@ function comparison = main(varargin)
     fprintf('Step 3: 检查断点续跑\n');
     fprintf('========================================\n');
 
-    workspace_root = fileparts(fileparts(mfilename('fullpath')));
+    workspace_root = fileparts(fileparts(fileparts(mfilename('fullpath'))));   % <repo>
     results_dir = fullfile(workspace_root, 'results', 'batch');
     if ~exist(results_dir, 'dir'), mkdir(results_dir); end
 

@@ -28,11 +28,11 @@ if sys.platform.startswith('win'):
     except (AttributeError, OSError):
         pass
 
-# 确保 python/ 包可导入
-REPO_ROOT = Path(__file__).parent.resolve()
+# 定位仓库根目录 (<repo>/others/batch_simulation/main.py -> 上三级)
+REPO_ROOT = Path(__file__).parent.parent.parent.resolve()
 sys.path.insert(0, str(REPO_ROOT))
 
-from batch_simulation.matlab_bridge import MatlabBridge, check_matlab_engine
+from others.batch_simulation.matlab_bridge import MatlabBridge, check_matlab_engine
 
 
 DEFAULT_ALGORITHMS = ['e-lmpc', 'active-set', 'interior-point', 'proposed-3iter']

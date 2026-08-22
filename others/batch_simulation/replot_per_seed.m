@@ -15,8 +15,8 @@ function replot_per_seed(results_file)
 %   results/batch/per_algorithm/{算法名}/seed_XXXX.png
 
     if nargin < 1 || isempty(results_file)
-        script_dir = fileparts(mfilename('fullpath'));
-        workspace_root = fileparts(script_dir);
+        script_dir = fileparts(mfilename('fullpath'));       % <repo>/others/batch_simulation
+        workspace_root = fileparts(fileparts(script_dir));   % <repo>
         results_dir = fullfile(workspace_root, 'results', 'batch');
 
         % 优先使用 final, 其次 checkpoint
@@ -36,8 +36,8 @@ function replot_per_seed(results_file)
     loaded = load(results_file, 'comparison');
     comparison = loaded.comparison;
 
-    script_dir = fileparts(mfilename('fullpath'));
-    workspace_root = fileparts(script_dir);
+    script_dir = fileparts(mfilename('fullpath'));       % <repo>/others/batch_simulation
+    workspace_root = fileparts(fileparts(script_dir));   % <repo>
     results_dir = fullfile(workspace_root, 'results', 'batch');
 
     algorithms = comparison.algorithms;

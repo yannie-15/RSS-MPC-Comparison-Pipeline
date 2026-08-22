@@ -60,11 +60,12 @@ class MatlabBridge:
         Returns:
             完整的 MATLAB 命令字符串。
         """
-        # 将仓库根目录和 batch_simulation/ 加入 path, 确保 main.m 等可被找到
+        # 将仓库根目录、本目录 (main.m 所在) 和 batch_simulation/ (run_one_case 等) 加入 path
         repo_str = str(self.repo_root).replace("\\", "/")
+        self_dir_str = str(Path(__file__).parent).replace("\\", "/")
         batch_str = str(self.repo_root / "batch_simulation").replace("\\", "/")
         return (
-            f"addpath('{repo_str}', '{batch_str}'); "
+            f"addpath('{repo_str}', '{self_dir_str}', '{batch_str}'); "
             f"{body}; exit"
         )
 
