@@ -64,12 +64,19 @@ class SolverSettings:
 
     speed 模式 + tol 1e-8 对齐 ECOS 默认 (用户确认); warm_start=2 绕 DLL C 层
     d_ocp_qcqp_ipm_arg_set_t0_init 误写 t_lam_min 的 bug.
+
+    integrator: 真实动力学 (plant) 状态推进方式, 4 算法统一生效, 不影响
+    算法内部预测模型 (HPIPM A/B 保持论文欧拉离散):
+        'euler' 定步长显式欧拉 (默认, golden 基准口径)
+        'ode45' scipy RK45 (Dormand-Prince 4(5)) 单步积分, 纯 Python
+                无 MATLAB 依赖 (dynamics.propagate_state_ode45)
     """
     mode: str = 'speed'
     tol: float = 1e-8
     iter_max: int = 1000
     mu0: float = 10.0
     warm_start: int = 2
+    integrator: str = 'euler'
 
     def to_dict(self) -> dict:
         return asdict(self)

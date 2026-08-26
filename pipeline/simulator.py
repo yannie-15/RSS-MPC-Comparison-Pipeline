@@ -6,6 +6,9 @@
     - 每步: control(path, k, lastBodyVelocity, state, params) -> u/世界速度/车体速度/诊断
     - step_failed / NaN-Inf 检查失败即终止 (与 MATLAB 一致)
     - per-step 记录: 状态/速度/控制/轮速/轮角/求解时长/迭代数/约束违反量/诊断
+    - 状态推进方式由 params.solver.integrator 选择 (4 算法统一生效, 算法
+      内部预测模型不变): 'euler' 默认 golden 口径 / 'ode45' 经
+      dynamics.propagate_state_ode45 (scipy RK45 单步积分, 纯 Python)
 
 算法通过注册表分发, 4 种算法全部在本仿真器内闭环:
     - proposed-3iter : 纯 Python (HPIPM OCP QCQP + SCP), 可用 --iters 指定
@@ -23,7 +26,8 @@ import sys
 import numpy as np
 
 from pipeline.params import AlgorithmParams, DT
-from pipeline.dynamics import propagate_state, compute_wheel_outputs
+from pipeline.dynamics import (compute_wheel_outputs, propagate_state,
+                               propagate_state_ode45)
 from pipeline.trajectory_generator import Trajectory
 
 # proposed 控制器实现归位算法包 algorithms/RSS_proposed/ (与 hpipm_qp_solver/
@@ -96,6 +100,9 @@ def simulate(trajectory: Trajectory, algorithm: str,
     覆盖 params.vehicle, 保证与参考场景一致.
     MATLAB 算法 (e-lmpc/active-set/interior-point) 经 MatlabAlgorithmBridge
     每步求解: 引擎会话随本函数开启/关闭 (启动约 30s, 之后每步毫秒级调用).
+    params.solver.integrator='ode45' 时状态推进改用 scipy RK45
+    (dynamics.propagate_state_ode45, 纯 Python 无 MATLAB 依赖;
+    默认 euler 不变).
     """
     algorithm = algorithm.lower()
     if algorithm not in ALGORITHMS:
@@ -133,6 +140,13 @@ def simulate(trajectory: Trajectory, algorithm: str,
         }
         bridge = MatlabAlgorithmBridge(algorithm, trajectory, verbose=verbose, K=params.K, run_config=run_config)
         control_fn = bridge.control
+
+    # ================= ode45 积分模式 (真实动力学高保真积分) =================
+    # plant 侧积分模式 (算法求解与内部预测模型零改动): 默认 euler 保持 golden
+    # 口径; ode45 时状态推进改用 dynamics.propagate_state_ode45
+    # (scipy RK45 单步积分论文式 (1), 步内 nu 零阶保持; 纯 Python,
+    # 无 MATLAB Engine 依赖, MATLAB 算法与此模式互不影响).
+    use_ode45 = params.solver.integrator == 'ode45'
 
     dt = float(params.dt)
     num_steps = int(trajectory.num_steps)
@@ -243,8 +257,14 @@ def simulate(trajectory: Trajectory, algorithm: str,
             wheelAngles[:, k - 1] = wheel_angle
             solved_count += 1
 
-            # ---- 推进状态 (原始动力学) ----
-            state = propagate_state(state, world_velocity, dt)
+            # ---- 推进状态 (原始动力学: Euler 默认 / ode45 高保真) ----
+            if use_ode45:
+                # ode45 分支: 接收车体系速度 nu (步内零阶保持, 论文式 1);
+                # 积分在算法 solveTimes 计时区间之外, 不污染耗时统计
+                state = propagate_state_ode45(state, body_velocity, dt)
+            else:
+                # 默认 Euler (golden 基准口径): 接收世界速度 R(psi)*nu
+                state = propagate_state(state, world_velocity, dt)
             last_body_velocity = body_velocity
             states[:, k] = state
 

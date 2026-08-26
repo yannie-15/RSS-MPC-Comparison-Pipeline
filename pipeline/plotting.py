@@ -11,6 +11,19 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt   # noqa: E402
 
+# ================= 统一绘图风格 (对齐 RSS_proposed 0121 仓库 plot_results.m) =================
+# 配色 = slanCL(1148) 前 5 色 (提取自 slandarer/MATLAB-2000-palettes 官方 slanCL_Data.mat)
+SLANCL_1148 = ['#486030',   # 1: Wheel 1
+               '#C03018',   # 2: Wheel 2 / Simulation Results
+               '#F0A800',   # 3: Wheel 3
+               '#484878',   # 4: Wheel 4 / Reference Trajectory
+               '#A8C018']   # 5: Constraints (虚线)
+
+matplotlib.rcParams.update({
+    'font.family': 'Times New Roman',   # 仓库: 全部文字 FontName='Times New Roman'
+    'mathtext.fontset': 'stix',         # Times 风格数学字体 (用于 $u_{v_x}$ 等标签)
+})
+
 from pipeline.params import AlgorithmParams   # noqa: E402
 from pipeline.simulator import SimResult      # noqa: E402
 from pipeline.metrics import wrap_angle       # noqa: E402
@@ -33,14 +46,12 @@ def plot_results(result: SimResult, params: AlgorithmParams,
     tag = f"{result.algorithm}_{result.scenario_name}_K{params.K}"
 
     # ================= 1. 轨迹跟踪 (XY) =================
-    fig, ax = plt.subplots(figsize=(6, 5))
-    ax.plot(result.path[0, :], result.path[1, :], '-', color='tab:blue',
+    fig, ax = plt.subplots(figsize=(5, 3))
+    ax.plot(result.path[0, :], result.path[1, :], '-', color=SLANCL_1148[3],
             linewidth=2, label='Reference Trajectory')
-    ax.plot(result.states[0, :M], result.states[1, :M], 'x-',
-            color='tab:red', linewidth=1.0, markersize=4,
+    ax.plot(result.states[0, :M], result.states[1, :M], 'x',
+            color=SLANCL_1148[1], linewidth=1.5, markersize=4,
             label='Simulation Results')
-    ax.plot(result.states[0, 0], result.states[1, 0], 'o', color='tab:green',
-            markersize=7, label='Start')
     ax.set_xlabel('x_w (m)')
     ax.set_ylabel('y_w (m)')
     ax.set_title('Trajectory Tracking Performance')
@@ -66,12 +77,12 @@ def plot_results(result: SimResult, params: AlgorithmParams,
             result.states[0:2, i] - result.path[0:2, ref_idx - 1])
         ori_err[i] = abs(wrap_angle(result.states[2, i] - result.path[2, ref_idx - 1]))
 
-    fig, axes = plt.subplots(2, 1, figsize=(7, 6), sharex=True)
-    axes[0].plot(t, pos_err, '-', color='tab:blue', linewidth=1.5)
+    fig, axes = plt.subplots(2, 1, figsize=(5, 4.5), sharex=True)
+    axes[0].plot(t, pos_err, '-', color=SLANCL_1148[0], linewidth=1.7)
     axes[0].set_ylabel('Position error (m)')
     axes[0].set_title('Tracking Errors')
     axes[0].grid(True)
-    axes[1].plot(t, ori_err, '-', color='tab:orange', linewidth=1.5)
+    axes[1].plot(t, ori_err, '-', color=SLANCL_1148[1], linewidth=1.7)
     axes[1].set_ylabel('Orientation error (rad)')
     axes[1].set_xlabel('Time (s)')
     axes[1].grid(True)
@@ -82,16 +93,17 @@ def plot_results(result: SimResult, params: AlgorithmParams,
     files.append(f)
 
     # ================= 3. 轮速 (含 vimax 约束线) =================
-    fig, ax = plt.subplots(figsize=(7, 4.5))
+    fig, ax = plt.subplots(figsize=(5, 3))
     for n in range(result.numWheels):
-        ax.plot(t, result.wheelSpeeds[n, :], '-', linewidth=1.5,
+        ax.plot(t, result.wheelSpeeds[n, :], '-', linewidth=1.7,
+                color=SLANCL_1148[n % len(SLANCL_1148)],
                 label=f'Wheel {n + 1}')
-    ax.axhline(vimax, linestyle='--', color='k', linewidth=1.5,
+    ax.axhline(vimax, linestyle='--', color=SLANCL_1148[4], linewidth=2,
                label='Constraints')
     ax.set_xlabel('Time (s)')
     ax.set_ylabel('Output Velocity (m/s)')
     ax.set_title('Wheel Speeds')
-    ax.legend(fontsize=7)
+    ax.legend(fontsize=8)
     ax.grid(True)
     f = out_dir / f'wheel_speeds_{tag}.png'
     fig.tight_layout()
@@ -104,17 +116,19 @@ def plot_results(result: SimResult, params: AlgorithmParams,
         d_angles = np.diff(result.wheelAngles, axis=1)
         d_angles = np.mod(d_angles + np.pi, 2 * np.pi) - np.pi
         phidot = d_angles / dt
-        fig, ax = plt.subplots(figsize=(7, 4.5))
+        fig, ax = plt.subplots(figsize=(5, 3))
         for n in range(result.numWheels):
-            ax.plot(t[1:], phidot[n, :], '-', linewidth=1.5,
+            ax.plot(t[1:], phidot[n, :], '-', linewidth=1.7,
+                    color=SLANCL_1148[n % len(SLANCL_1148)],
                     label=f'Wheel {n + 1}')
-        ax.axhline(phidotmax, linestyle='--', color='k', linewidth=1.5,
-                   label='Constraints')
-        ax.axhline(-phidotmax, linestyle='--', color='k', linewidth=1.5)
+        ax.axhline(phidotmax, linestyle='--', color=SLANCL_1148[4],
+                   linewidth=2, label='Constraints')
+        ax.axhline(-phidotmax, linestyle='--', color=SLANCL_1148[4],
+                   linewidth=2)
         ax.set_xlabel('Time (s)')
         ax.set_ylabel('Steering rate (rad/s)')
         ax.set_title('Steering Rate of Each Wheel')
-        ax.legend(fontsize=7)
+        ax.legend(fontsize=8)
         ax.grid(True)
         f = out_dir / f'steering_rates_{tag}.png'
         fig.tight_layout()
@@ -124,13 +138,14 @@ def plot_results(result: SimResult, params: AlgorithmParams,
 
     # ================= 5. 求解时长 =================
     if result.solveTimes.size > 0:
-        fig, ax = plt.subplots(figsize=(7, 4.5))
-        ax.plot(t, result.solveTimes, '.-', color='tab:purple',
+        fig, ax = plt.subplots(figsize=(5, 3))
+        ax.plot(t, result.solveTimes, '.-', color=SLANCL_1148[3],
                 linewidth=1.0, markersize=4, label='Per-step solve time')
         if metrics is not None and metrics.get('medianSolveTime') is not None:
             med = metrics.get('medianSolveTime')
             if med == med:   # not NaN
-                ax.axhline(med, linestyle='--', color='tab:red', linewidth=1.5,
+                ax.axhline(med, linestyle='--', color=SLANCL_1148[1],
+                           linewidth=1.5,
                            label=f'Median (post warm-up) = {med:.4f} s')
         ax.set_xlabel('Time (s)')
         ax.set_ylabel('Solve time (s)')
@@ -144,10 +159,11 @@ def plot_results(result: SimResult, params: AlgorithmParams,
         files.append(f)
 
     # ================= 6. 控制输入 =================
-    fig, ax = plt.subplots(figsize=(7, 4.5))
+    fig, ax = plt.subplots(figsize=(5, 3))
     labels = ['$u_{v_x}$', '$u_{v_y}$', '$u_{\\omega}$']
     for i in range(3):
-        ax.plot(t, result.executedU[i, :], '-', linewidth=1.5, label=labels[i])
+        ax.plot(t, result.executedU[i, :], '-', linewidth=1.7,
+                color=SLANCL_1148[i], label=labels[i])
     ax.set_xlabel('Time (s)')
     ax.set_ylabel('Control increment')
     ax.set_title('Executed Control Inputs')

@@ -34,6 +34,14 @@ if os.path.isdir(_sys_site) and _sys_site not in sys.path:
 
 import numpy as np
 
+# numpy has been loaded and cached from the system site-packages; restore the previously removed venv
+# site-packages (appended to the end of sys.path, lowest priority, does not affect the already loaded and cached
+# numpy/scipy): venv-exclusive packages (such as matlabengine, needed by the MATLAB
+# algorithm bridge e-lmpc/active-set/interior-point) can still be imported normally
+for _p in _venv_paths_removed:
+    if _p not in sys.path:
+        sys.path.append(_p)
+
 # HPIPM Python 接口
 _hpipm_path = None
 

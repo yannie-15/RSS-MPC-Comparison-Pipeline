@@ -12,7 +12,7 @@ RSS-MPC-Comparison-Pipeline-rss_hpipm/
 │   ├── main.py                          #   入口: --seed/--algorithm/--K/--iters
 │   ├── params.py                        #   参数定义 (dt=0.01 常量/车辆/权重/求解器)
 │   ├── trajectory_generator.py          #   轨迹生成 (seed_id, K -> Bezier 参考 + 场景)
-│   ├── dynamics.py                      #   原始动力学 (状态传播 + 轮子正运动学)
+│   ├── dynamics.py                      #   原始动力学 (状态传播 + 轮子正运动学 + ode45 积分)
 │   ├── simulator.py                     #   闭环仿真器 (4 算法统一闭环)
 │   ├── metrics.py                       #   评估 (RMSE/J 分解/求解时长/约束违反)
 │   ├── plotting.py                      #   结果画图 (轨迹/误差/轮速/求解时长...)
@@ -118,6 +118,11 @@ python pipeline/main.py --seed 0 --algorithm proposed-3iter --K 6 --vimax 8 --ph
 python pipeline/main.py --seed 0 --algorithm proposed-3iter --K 6 --rho 1,0
 python pipeline/main.py --seed 0 --algorithm proposed-3iter --K 6 --rho 0.05
 
+# 真实动力学 ode45 积分: --integrator ode45 (纯 Python scipy RK45, 无
+# MATLAB 依赖; matlab-ode45/rk45 为历史别名), 4 算法统一生效,
+# 结果目录带 _ode45 后缀
+python pipeline/main.py --seed 0 --algorithm proposed-3iter --K 6 --integrator ode45
+
 # 模块方式启动
 python -m pipeline.main --seed 0 --algorithm proposed-3iter --K 6
 ```
@@ -131,6 +136,7 @@ python -m pipeline.main --seed 0 --algorithm proposed-3iter --K 6
 | `--vimax` | 覆盖最大轮速约束 vimax (m/s)，4 算法统一生效；不传用场景值 (seed=0 为论文基准 5)。结果目录名带 `_vimax{N}` 后缀 | 场景值 |
 | `--phidotmax` | 覆盖最大转向角速率约束 phidotmax (rad/s)，4 算法统一生效；不传用场景值 (seed=0 为论文基准 5π)。结果目录名带 `_phidot{N}` 后缀 | 场景值 |
 | `--rho` | 控制正则化 rho：单值 (如 `0.01`) 或逗号分隔逐步序列 (如 `1,0` = 第 1 步 rho=1 之后 rho=0)，序列短于总步数时保持末值。真正生效于 proposed-3iter 的 RSS 锚点正则化 (论文式 17)；3 个 fmincon 基线算法的 rho 为目标函数签名中的遗留参数 (未参与代价)，传入仅贯通管路、不改变其基线结果。结果目录名带 `_rho...` 后缀 | 各算法默认 |
+| `--integrator` | 真实动力学 (plant) 状态推进方式，4 算法统一生效，算法内部预测模型不变：`ode45` = 纯 Python scipy RK45 (Dormand-Prince 4(5)) 单步积分，无 MATLAB 依赖（`matlab-ode45`/`rk45` 为历史别名，等价归一为 `ode45`）。结果目录名带 `_ode45` 后缀 | `euler` |
 | `--out` | 结果输出根目录 | `results/pipeline` |
 | `--quiet` | 关闭算法 per-iteration 打印 | 关闭 |
 
@@ -141,7 +147,15 @@ python -m pipeline.main --seed 0 --algorithm proposed-3iter --K 6
 3. **`figures/*.png`** — 画图 (轨迹 / 跟踪误差 / 轮速 / 转向速率 / 求解时长 / 控制输入)
 4. **`simulation_data.npz`** — 原始数组 (复画图 / golden 对比用)
 
-环境要求：proposed-3iter 需 HPIPM DLL（Windows 编译脚本 `algorithms/RSS_proposed/build_hpipm_windows.sh`，构建依赖 `third_party/blasfeo` submodule，clone 后执行 `git submodule update --init third_party/blasfeo`）；MATLAB 算法需 `matlabengine` 包（版本须与 MATLAB 发行版匹配，安装见 `pipeline/matlab_algorithm.py` 模块注释）+ MATLAB 在 PATH。三个算法目录（RSS_sqp/RSS_fmincon/RSS_active_set）已作为普通目录并入主仓库，clone 即得，无需 submodule 操作。
+环境要求：proposed-3iter 需 HPIPM DLL（Windows 编译脚本 `algorithms/RSS_proposed/build_hpipm_windows.sh`，构建依赖 `third_party/blasfeo` submodule，clone 后执行 `git submodule update --init third_party/blasfeo`）；MATLAB 算法需 `matlabengine` 包（版本须与 MATLAB 发行版匹配，安装见 `pipeline/matlab_algorithm.py` 模块注释）+ MATLAB 在 PATH；`--integrator ode45` 为纯 Python 实现（scipy），无需 MATLAB。三个算法目录（RSS_sqp/RSS_fmincon/RSS_active_set）已作为普通目录并入主仓库，clone 即得，无需 submodule 操作。
+
+### 真实动力学积分 (ode45)
+
+`--integrator ode45` 时，闭环状态推进由 `pipeline/dynamics.py` 的 `propagate_state_ode45` 完成：scipy `solve_ivp` RK45（自适应 Dormand-Prince 4(5)，与 MATLAB ode45 同族，rtol=1e-9 / atol=1e-12），对论文式 (1) 连续动力学 dxi/dt = R(ψ)·ν 做单步积分（步内 ν 零阶保持，接收车体系速度），与步内解析精确解 (SE(2) 指数映射) 偏差 < 1e-9 m。
+
+- 4 算法统一生效（同一 plant）：算法的求解构造、调用次数（proposed 严格 3 次 HPIPM）、MATLAB bridge 均不变；plant 积分精度高于算法内部预测模型，二者失配是对控制器鲁棒性的真实测试
+- 积分属 plant 侧（算法解出控制量之后、状态推进），耗时在算法 solveTimes 计时区间之外，不污染耗时统计
+- 纯 Python 实现，无 MATLAB Engine 依赖、无 30s 引擎启动（`matlab-ode45`/`rk45` 为历史别名，等价归一为 `ode45`）
 
 ## 各板块调用逻辑与流程图
 
@@ -192,10 +206,11 @@ simulator.py (原始动力学闭环, 按步长 K 循环调用算法 A)
         │
         ▼  (两条分支在此汇合: 算法解出的控制量都交回仿真器)
 dynamics.py —— 机器人的"真身", 按原始动力学推进一步
- (propagate_state: 用世界速度把位姿 [x;y;ψ] 前推一个 dt, 不做任何
-  线性化——算法内部的近似模型只管算控制量, 机器人按真模型动,
-  两者的差距才是真实跟踪误差; compute_wheel_outputs 顺带算出
-  各轮速度/转向角, 记录下来供画图)
+ (--integrator ode45: propagate_state_ode45 用 scipy RK45
+  对论文式 (1) 连续动力学单步积分 (接收
+  车体系速度, 步内零阶保持), 不做任何线性化——算法内部的近似模型只管
+  算控制量, 机器人按真模型动, 两者的差距才是真实跟踪误差;
+  compute_wheel_outputs 顺带算出各轮速度/转向角, 记录下来供画图)
         │
         │  步数没走完 且 没有失败 (step_failed/异常)?
         │      是 ──► 回到上面的"仿真器每步调用算法"处, 带着
@@ -219,7 +234,7 @@ metrics.py  plotting.py  结果三件套落盘
 | 入口 | `pipeline/main.py` | 解析 CLI (seed/algorithm/K/iters)，4 算法统一走 Python 主干 (轨迹→仿真→评估→落盘)，统一落盘结果三件套 | 用户命令行 | `trajectory_generator` / `simulator` / `metrics` / `plotting` |
 | 参数定义 | `pipeline/params.py` | `DT=0.01` 常量、车辆参数（轮位/vimax/phidotmax）、权重、求解器参数、RunConfig 记录结构 | 所有 pipeline 模块 | — |
 | 轨迹生成 | `pipeline/trajectory_generator.py` | (seed_id, K) → Bernstein/Bezier 参考轨迹 + 场景参数；seed=0 为 paper_fixed 固定场景，seed≥1 读 `scenario_bank/scenario_seed{N}.mat`（与 MATLAB 同源） | `main.py` | `simulator.py` |
-| 原始动力学 | `pipeline/dynamics.py` | `propagate_state`（状态传播）+ `compute_wheel_outputs`（轮速/轮角正运动学）；使用**原始动力学**而非算法内部展开/线性化误差动力学 | `simulator.py` | — |
+| 原始动力学 | `pipeline/dynamics.py` | `propagate_state`（默认 Euler 状态传播）+ `propagate_state_ode45`（`--integrator ode45`：scipy RK45 单步积分论文式 (1)，步内 ν 零阶保持、接收车体系速度，纯 Python 无 MATLAB 依赖）+ `compute_wheel_outputs`（轮速/轮角正运动学）；使用**原始动力学**而非算法内部展开/线性化误差动力学 | `simulator.py` | — |
 | 闭环仿真器 | `pipeline/simulator.py` | 原始动力学闭环：每步 `control(path, step, state_dot, state, params)` → u/世界速度/车体速度/诊断，推进状态并逐步记录；step_failed/NaN 检查失败即终止；4 算法均在此闭环（MATLAB 算法经 `MatlabAlgorithmBridge` 每步求解） | `main.py` | `dynamics` / `control_rss_ocpqcqp` / `matlab_algorithm` |
 | proposed 控制器 | `algorithms/RSS_proposed/control_rss_ocpqcqp.py` | RSS 控制律：SCP 外层循环 `--iters` 次（默认 3），每次构造并求解凸 QCQP 子问题，失败时保留最近可行 incumbent | `simulator.py` | `construct_ocp_qcqp` |
 | QCQP 构造 | `algorithms/RSS_proposed/construct_ocp_qcqp.py` | RSS 模型 → OCP QCQP 矩阵（A/B/Bb/Q/R/S/q/r/Qq/Sq/Rq/qq/rq/uq），转向锥/轮速 SOC 以原生二次约束给出 | `control_rss_ocpqcqp.py` | `hpipm_qp_solver` |
@@ -235,3 +250,4 @@ metrics.py  plotting.py  结果三件套落盘
 
 - proposed-3iter golden 基准 (seed=0, K=6, iters=3) 与 MATLAB 完全对齐：RMSE=0.036793, J_total=13.3838, validSteps=100/100
 - MATLAB Engine 桥接算法 (Python 主干 + MATLAB 每步求解) 与 MATLAB 侧闭环结果完全一致：e-lmpc seed=0: RMSE=0.037776, J_total=44.4226, validSteps=100/100（两侧完全一致）
+- ode45 积分模式冒烟 (seed=0, K=6)：proposed-3iter RMSE=0.038270 / J_total=13.6901，e-lmpc RMSE=0.037838 / J_total=44.3523，均 validSteps=100/100

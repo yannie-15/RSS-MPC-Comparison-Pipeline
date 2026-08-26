@@ -5,6 +5,7 @@
     python pipeline/main.py --seed 0 --algorithm proposed-3iter --K 6 --iters 5
     python pipeline/main.py --seed 0 --algorithm proposed-3iter --K 6 --rho 1,0
     python pipeline/main.py --seed 0 --algorithm proposed-3iter --K 6 --vimax 8
+    python pipeline/main.py --seed 0 --algorithm proposed-3iter --K 6 --integrator ode45
     python pipeline/main.py --seed 0 --algorithm e-lmpc --K 6        (MATLAB Engine)
     python -m pipeline.main --seed 0 --algorithm proposed-3iter --K 6
 
@@ -43,7 +44,8 @@ from pathlib import Path
 if __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pipeline.params import DT, AlgorithmParams, CostWeights, RunConfig
+from pipeline.params import (DT, AlgorithmParams, CostWeights, RunConfig,
+                             SolverSettings)
 from pipeline.trajectory_generator import make_trajectory
 from pipeline.simulator import simulate, ALGORITHMS, MATLAB_ONLY_ALGORITHMS
 from pipeline.metrics import compute_metrics
@@ -67,7 +69,7 @@ def _parse_rho(text: str) -> list:
 def run(seed_id: int, algorithm: str, K: int, iters: int = 3,
         out_root=None, verbose: bool = True,
         vimax: float = None, phidotmax: float = None,
-        rho: list = None) -> dict:
+        rho: list = None, integrator: str = 'euler') -> dict:
     """单次完整 pipeline 运行, 返回 {'run_dir', 'metrics', 'success', ...}.
 
     iters: proposed 算法的 SCP 外层迭代数 (每步 HPIPM 求解次数), 默认 3.
@@ -75,6 +77,9 @@ def run(seed_id: int, algorithm: str, K: int, iters: int = 3,
         默认 None = 用场景值 (seed=0 即论文基准 5 / 5π).
     rho: 控制正则化 rho 序列; None = 各算法默认值, [v] = 常数,
         [v1,v2,...] = 第 k 步取 v_k (序列短于总步数时保持末值).
+    integrator: 真实动力学 (plant) 积分方式 ('euler' 默认 golden 口径 |
+        'ode45' scipy RK45 高保真积分), 4 算法统一生效,
+        算法内部预测模型不变; 非默认时结果目录加 _ode45 后缀.
     """
     algorithm = algorithm.lower()
     is_matlab_algo = algorithm in MATLAB_ONLY_ALGORITHMS
@@ -91,6 +96,8 @@ def run(seed_id: int, algorithm: str, K: int, iters: int = 3,
         run_name += f'_phidot{phidotmax:g}'
     if rho:
         run_name += '_rho' + '_'.join(f'{v:g}' for v in rho)
+    if integrator != 'euler':
+        run_name += '_ode45'
     run_dir = out_root / algorithm / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -119,7 +126,8 @@ def run(seed_id: int, algorithm: str, K: int, iters: int = 3,
         weights = CostWeights(rho=rho_schedule[0])
     params = AlgorithmParams(K=K, dt=DT, max_iter=iters,
                              weights=weights, rho_schedule=rho_schedule,
-                             vehicle=trajectory.vehicle)
+                             vehicle=trajectory.vehicle,
+                             solver=SolverSettings(integrator=integrator))
     result = simulate(trajectory, algorithm, params, verbose=verbose)
     traj_num_steps = trajectory.num_steps
     traj_source = trajectory.source
@@ -145,6 +153,7 @@ def run(seed_id: int, algorithm: str, K: int, iters: int = 3,
     config_payload = run_config.to_dict()
     config_payload['run_info'] = {
         'backend': 'matlab-engine' if is_matlab_algo else 'python',
+        'integrator': integrator,
         'wall_time_s': wall_time,
         'solved_count': result.solvedCount,
         'success': result.success,
@@ -235,6 +244,14 @@ def main(argv=None):
                         help='控制正则化 rho, 4 算法统一生效: 单值 (如 0.01) '
                              '或逗号分隔逐步序列 (如 1,0 = 第1步 rho=1 之后 rho=0); '
                              '序列短于总步数时保持末值; 不传则各算法用默认值')
+    parser.add_argument('--integrator', default='euler',
+                        choices=['euler', 'ode45', 'matlab-ode45', 'rk45'],
+                        help='真实动力学 (plant) 状态推进方式, 4 算法统一'
+                             '生效, 算法内部预测模型不变: euler = 定步长'
+                             '显式欧拉 (默认, golden 基准口径); '
+                             'ode45 = scipy RK45 (Dormand-Prince 4(5)) '
+                             '单步高保真积分 (纯 Python, 无需 MATLAB; '
+                             'matlab-ode45/rk45 为历史别名, 等价)')
     parser.add_argument('--out', default=None,
                         help='结果输出根目录 (默认 results/pipeline)')
     parser.add_argument('--quiet', action='store_true',
@@ -242,9 +259,13 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     # dt (tau) 写死为 0.01 s, 不作为命令行参数
+    integrator = args.integrator
+    if integrator in ('rk45', 'matlab-ode45'):   # 历史别名, 统一归一为 ode45
+        integrator = 'ode45'
     run(args.seed, args.algorithm, args.K, iters=args.iters,
         out_root=args.out, verbose=not args.quiet,
-        vimax=args.vimax, phidotmax=args.phidotmax, rho=args.rho)
+        vimax=args.vimax, phidotmax=args.phidotmax, rho=args.rho,
+        integrator=integrator)
 
 
 if __name__ == '__main__':
