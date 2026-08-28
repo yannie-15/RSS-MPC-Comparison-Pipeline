@@ -37,6 +37,7 @@ _RSS_PROPOSED_DIR = str(Path(__file__).resolve().parent.parent
 if _RSS_PROPOSED_DIR not in sys.path:
     sys.path.insert(0, _RSS_PROPOSED_DIR)
 from control_rss_ocpqcqp import control_rss_ocpqcqp
+from control_rss_vel import control_rss_vel
 
 # 算法注册表: 算法名 -> 控制函数 (None 表示该算法未在 Python pipeline 移植)
 # 统一签名: control(path, step, state_dot, state, params, verbose)
@@ -44,6 +45,9 @@ from control_rss_ocpqcqp import control_rss_ocpqcqp
 MATLAB_ONLY_ALGORITHMS = ('e-lmpc', 'active-set', 'interior-point')
 ALGORITHMS: Dict[str, Optional[Callable]] = {
     'proposed-3iter': control_rss_ocpqcqp,
+    # 实验性降维: velocity-only OCP QCQP (nx=3, 状态只剩速度, 代价只含
+    # 速度跟踪; 与原版并存对比复杂度, 不替代原版)
+    'proposed-3iter-vel': control_rss_vel,
     'e-lmpc': None,
     'active-set': None,
     'interior-point': None,
